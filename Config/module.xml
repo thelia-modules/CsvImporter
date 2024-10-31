@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module>
+    <fullnamespace>CsvImporter\CsvImporter</fullnamespace>
+    <descriptive locale="en_US">
+        <title>CSV Importer</title>
+    </descriptive>
+    <descriptive locale="fr_FR">
+        <title>CSV Importer</title>
+    </descriptive>
+    <version>1.0.0</version>
+    <author>
+        <name>Thelia</name>
+        <email>info@thelia.net</email>
+    </author>
+    <type>classic</type>
+    <thelia>2.5.0</thelia>
+    <stability>alpha</stability>
+</module>

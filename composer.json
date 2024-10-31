@@ -1,0 +1,11 @@
+{
+    "name": "thelia/csv-importer",
+    "license": "LGPL-3.0+",
+    "type": "thelia-module",
+    "require": {
+        "thelia/installer": "~1.1"
+    },
+    "require-dev": {
+        "roave/security-advisories": "dev-latest"
+    }
+}
