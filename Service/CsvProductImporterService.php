@@ -17,6 +17,7 @@ use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Thelia\Core\Event\Attribute\AttributeAvCreateEvent;
 use Thelia\Core\Event\Attribute\AttributeCreateEvent;
+use Thelia\Core\Event\Brand\BrandCreateEvent;
 use Thelia\Core\Event\Category\CategoryCreateEvent;
 use Thelia\Core\Event\Product\ProductCreateEvent;
 use Thelia\Core\Event\Product\ProductUpdateEvent;
@@ -24,6 +25,8 @@ use Thelia\Core\Event\ProductSaleElement\ProductSaleElementCreateEvent;
 use Thelia\Core\Event\ProductSaleElement\ProductSaleElementUpdateEvent;
 use Thelia\Core\Event\Tax\TaxEvent;
 use Thelia\Core\Event\Tax\TaxRuleEvent;
+use Thelia\Core\Event\Template\TemplateAddAttributeEvent;
+use Thelia\Core\Event\Template\TemplateCreateEvent;
 use Thelia\Core\Event\TheliaEvents;
 use Thelia\Log\Tlog;
 use Thelia\Model\Attribute;
@@ -31,6 +34,10 @@ use Thelia\Model\AttributeAv;
 use Thelia\Model\AttributeAvQuery;
 use Thelia\Model\AttributeCombinationQuery;
 use Thelia\Model\AttributeQuery;
+use Thelia\Model\AttributeTemplateQuery;
+use Thelia\Model\Base\TemplateQuery;
+use Thelia\Model\Brand;
+use Thelia\Model\BrandQuery;
 use Thelia\Model\Category;
 use Thelia\Model\CategoryQuery;
 use Thelia\Model\Country;
@@ -40,6 +47,7 @@ use Thelia\Model\ProductSaleElements;
 use Thelia\Model\ProductSaleElementsQuery;
 use Thelia\Model\TaxRule;
 use Thelia\Model\TaxRuleCountryQuery;
+use Thelia\Model\Template;
 use Thelia\TaxEngine\TaxType\PricePercentTaxType;
 
 class CsvProductImporterService
@@ -82,7 +90,8 @@ class CsvProductImporterService
                 $locale,
                 $this->findOrCreateCategory($productData, $locale)
             );
-            $this->createOrUpdateProductSaleElements($product, $productData, $locale);
+            $template = $this->addTemplateToProduct($product, $locale);
+            $this->createOrUpdateProductSaleElements($product, $productData, $locale, $template);
             //            $this->addImages($product, $productData);
         }
 
@@ -90,6 +99,9 @@ class CsvProductImporterService
         Tlog::getInstance()->addInfo('Importation et mise à jour terminées.');
     }
 
+    /**
+     * @throws \JsonException
+     */
     private function findOrCreateTax(array $productData, Country $country, string $locale): TaxRule
     {
         $taxLabel = $productData['Règle de taxe'] ?: $this->previousTaxRate;
@@ -103,7 +115,8 @@ class CsvProductImporterService
         }
 
         $taxEvent = $this->createTax($locale, $taxTitle, $taxPercent);
-        $taxRuleEvent = $this->createTaxRule($locale, $taxTitle, $country, $taxEvent->getTax()?->getId());
+        $taxRuleEvent = $this->createTaxRule($locale, $taxTitle, $country, $taxEvent->getTax()->getId());
+
         return $taxRuleEvent->getTaxRule();
     }
 
@@ -118,12 +131,12 @@ class CsvProductImporterService
     {
         return TaxRuleCountryQuery::create()
             ->useTaxQuery()
-                ->useTaxI18nQuery()
-                    ->filterByTitle($taxTitle)
-                ->endUse()
+            ->useTaxI18nQuery()
+            ->filterByTitle($taxTitle)
+            ->endUse()
             ->endUse()
             ->filterByCountry($country)
-            ->findOne()->getTaxRule();
+            ->findOne()?->getTaxRule();
     }
 
     private function createTax(string $locale, string $taxTitle, string $taxPercent): TaxEvent
@@ -224,21 +237,23 @@ class CsvProductImporterService
     {
         $product = ProductQuery::create()
             ->useProductI18nQuery()
-                ->filterByTitle($productData['Titre du produit (Description)'])
-                ->filterByLocale($locale)
+            ->filterByTitle($productData['Titre du produit (Description)'])
+            ->filterByLocale($locale)
             ->endUse()
             ->findOne();
         if ($product) {
             return $product;
         }
 
-        Tlog::getInstance()->addInfo('Produit créé : '.$productData['Titre du produit (Description)']);
-
         $newProduct = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
+        Tlog::getInstance()->addInfo('Produit créé : '.$productData['Titre du produit (Description)']);
 
         return $this->dispatchProductEvent(new ProductUpdateEvent($newProduct->getId()), $productData, $locale, $category, $country);
     }
 
+    /**
+     * @throws \JsonException
+     */
     private function dispatchProductEvent(ProductCreateEvent|ProductUpdateEvent $event, array $productData, string $locale, Category $category, Country $country, bool $isNew = false): Product
     {
         $event
@@ -249,6 +264,7 @@ class CsvProductImporterService
             ->setBasePrice($productData['Prix du Produit HT'])
             ->setBaseWeight($productData['Poids'] ?? 0)
             ->setTaxRuleId($this->findOrCreateTax($productData, $country, $locale)->getId());
+
         if ($isNew) {
             $event->setVisible(1)
                 ->setCurrencyId(1);
@@ -257,6 +273,7 @@ class CsvProductImporterService
         if ($event instanceof ProductUpdateEvent) {
             $event->setChapo($productData['Description courte']);
             $event->setDescription($productData['Description Longue']);
+            $event->setBrandId($this->findOrCreateBrand($productData, $locale)->getId());
         }
         $this->dispatcher->dispatch($event, $isNew ? TheliaEvents::PRODUCT_CREATE : TheliaEvents::PRODUCT_UPDATE);
 
@@ -266,7 +283,7 @@ class CsvProductImporterService
     /**
      * @throws PropelException
      */
-    private function createOrUpdateProductSaleElements(Product $product, array $productData, string $locale): ProductSaleElements
+    private function createOrUpdateProductSaleElements(Product $product, array $productData, string $locale, Template $template): ProductSaleElements
     {
         $productSaleElement = ProductSaleElementsQuery::create()
             ->filterByProductId($product->getId())
@@ -276,9 +293,10 @@ class CsvProductImporterService
         $attributeAvListIds = [];
         foreach ($this->getAttributeColumns($productData) as $attributeColumn => $attributeTitle) {
             $attribute = $this->findOrCreateAttribute(substr($attributeColumn, 2), $locale);
-            $attributeAv= $this->findOrCreateAttributeAv($attributeTitle, $attribute, $locale);
+            $attributeAv = $this->findOrCreateAttributeAv($attributeTitle, $attribute, $locale);
             $attributeAvList[] = $attributeAv;
             $attributeAvListIds[] = $attributeAv->getId();
+            $this->addAttributeToTemplate($template, $attribute);
         }
         if (!$productSaleElement) {
             $event = new ProductSaleElementCreateEvent($product, $attributeAvListIds, 1);
@@ -292,7 +310,6 @@ class CsvProductImporterService
                     ->filterByAttributeId($attributeAv->getAttribute()->getId())
                     ->filterByAttributeAvId($attributeAv->getId())
                     ->findOneOrCreate();
-
                 $attributeCombination->save();
                 $productSaleElement->addAttributeCombination($attributeCombination);
             }
@@ -304,10 +321,10 @@ class CsvProductImporterService
             ->setEanCode($productData['EAN'])
             ->setReference($productData['Référence Produit (Code)'])
             ->setCurrencyId(1)
-            ->setProduct($product)
-        ;
-
+            ->setTaxRuleId($product->getTaxRuleId())
+            ->setProduct($product);
         $this->dispatcher->dispatch($event, TheliaEvents::PRODUCT_UPDATE_PRODUCT_SALE_ELEMENT);
+
         return $event->getProductSaleElement();
     }
 
@@ -322,8 +339,8 @@ class CsvProductImporterService
     {
         $attribute = AttributeQuery::create()
             ->useAttributeI18nQuery()
-                ->filterByTitle($attributeTitle)
-                ->filterByLocale($locale)
+            ->filterByTitle($attributeTitle)
+            ->filterByLocale($locale)
             ->endUse()
             ->findOne();
         if ($attribute) {
@@ -331,7 +348,7 @@ class CsvProductImporterService
         }
 
         $event = new AttributeCreateEvent();
-        $event->setAttribute($attributeTitle)
+        $event->setTitle($attributeTitle)
             ->setLocale($locale);
         $this->dispatcher->dispatch($event, TheliaEvents::ATTRIBUTE_CREATE);
 
@@ -342,8 +359,8 @@ class CsvProductImporterService
     {
         $attributeAv = AttributeAvQuery::create()
             ->useAttributeAvI18nQuery()
-                ->filterByTitle($attributeAvTitle)
-                ->filterByLocale($locale)
+            ->filterByTitle($attributeAvTitle)
+            ->filterByLocale($locale)
             ->endUse()
             ->findOne();
 
@@ -358,5 +375,73 @@ class CsvProductImporterService
         $this->dispatcher->dispatch($event, TheliaEvents::ATTRIBUTE_AV_CREATE);
 
         return $event->getAttributeAv();
+    }
+
+    private function findOrCreateBrand(array $productData, string $locale): Brand
+    {
+        $brandTitle = $productData['Marque'];
+        $brand = BrandQuery::create()
+            ->useBrandI18nQuery()
+            ->filterByTitle($brandTitle)
+            ->endUse()
+            ->findOne();
+        if ($brand) {
+            return $brand;
+        }
+        $event = new BrandCreateEvent();
+        $event
+            ->setLocale($locale)
+            ->setTitle($brandTitle)
+            ->setVisible(1);
+        $this->dispatcher->dispatch($event, TheliaEvents::BRAND_CREATE);
+
+        return $event->getBrand();
+    }
+
+    private function findOrCreateTemplate(string $attributeName, string $locale): Template
+    {
+        $template = TemplateQuery::create()
+            ->useTemplateI18nQuery()
+            ->filterByName($attributeName)
+            ->filterByLocale($locale)
+            ->endUse()
+            ->findOne();
+        if ($template) {
+            return $template;
+        }
+        $event = new TemplateCreateEvent();
+        $event->setLocale($locale)
+            ->setTemplateName($attributeName);
+        $this->dispatcher->dispatch($event, TheliaEvents::TEMPLATE_CREATE);
+
+        return $event->getTemplate();
+    }
+
+    /**
+     * @throws PropelException
+     */
+    private function addAttributeToTemplate(Template $template, Attribute $attribute): void
+    {
+        $attributeTemplate = AttributeTemplateQuery::create()
+            ->filterByAttributeId($attribute->getId())
+            ->filterByTemplateId($template->getId())
+            ->findOne();
+        if ($attributeTemplate) {
+            return;
+        }
+        $event = new TemplateAddAttributeEvent($template, $attribute->getId());
+        $this->dispatcher->dispatch($event, TheliaEvents::TEMPLATE_ADD_ATTRIBUTE);
+    }
+
+    /**
+     * @throws PropelException
+     */
+    private function addTemplateToProduct(Product $product, string $locale): Template
+    {
+        $template = $this->findOrCreateTemplate($product->getCategories()[0]->getTitle(), $locale);
+        $product->setTemplateId($template->getId());
+        $product->save();
+
+        return $template;
     }
 }
