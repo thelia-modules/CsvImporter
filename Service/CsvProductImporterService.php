@@ -15,10 +15,14 @@ namespace CsvImporter\Service;
 use Propel\Runtime\Exception\PropelException;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Thelia\Core\Event\Attribute\AttributeAvCreateEvent;
 use Thelia\Core\Event\Attribute\AttributeCreateEvent;
 use Thelia\Core\Event\Brand\BrandCreateEvent;
 use Thelia\Core\Event\Category\CategoryCreateEvent;
+use Thelia\Core\Event\Feature\FeatureAvCreateEvent;
+use Thelia\Core\Event\Feature\FeatureCreateEvent;
+use Thelia\Core\Event\File\FileCreateOrUpdateEvent;
 use Thelia\Core\Event\Product\ProductCreateEvent;
 use Thelia\Core\Event\Product\ProductUpdateEvent;
 use Thelia\Core\Event\ProductSaleElement\ProductSaleElementCreateEvent;
@@ -26,8 +30,10 @@ use Thelia\Core\Event\ProductSaleElement\ProductSaleElementUpdateEvent;
 use Thelia\Core\Event\Tax\TaxEvent;
 use Thelia\Core\Event\Tax\TaxRuleEvent;
 use Thelia\Core\Event\Template\TemplateAddAttributeEvent;
+use Thelia\Core\Event\Template\TemplateAddFeatureEvent;
 use Thelia\Core\Event\Template\TemplateCreateEvent;
 use Thelia\Core\Event\TheliaEvents;
+use Thelia\Files\FileManager;
 use Thelia\Log\Tlog;
 use Thelia\Model\Attribute;
 use Thelia\Model\AttributeAv;
@@ -41,7 +47,15 @@ use Thelia\Model\BrandQuery;
 use Thelia\Model\Category;
 use Thelia\Model\CategoryQuery;
 use Thelia\Model\Country;
+use Thelia\Model\Event\ProductSaleElementsProductImageEvent;
+use Thelia\Model\Feature;
+use Thelia\Model\FeatureAv;
+use Thelia\Model\FeatureAvQuery;
+use Thelia\Model\FeatureProductQuery;
+use Thelia\Model\FeatureQuery;
+use Thelia\Model\FeatureTemplateQuery;
 use Thelia\Model\Product;
+use Thelia\Model\ProductImageQuery;
 use Thelia\Model\ProductQuery;
 use Thelia\Model\ProductSaleElements;
 use Thelia\Model\ProductSaleElementsQuery;
@@ -55,10 +69,11 @@ class CsvProductImporterService
     public const LEVEL_1 = 'Niveau 1';
     public const LEVEL_4 = 'Niveau 4';
     public const ATTRIBUTE_DISCRIMINATOR = 'D:';
+    public const FEATURE_DISCRIMINATOR = 'C:';
 
     private ?string $previousTaxRate = null;
 
-    public function __construct(private EventDispatcherInterface $dispatcher)
+    public function __construct(private EventDispatcherInterface $dispatcher, private FileManager $fileManager)
     {
     }
 
@@ -90,9 +105,9 @@ class CsvProductImporterService
                 $locale,
                 $this->findOrCreateCategory($productData, $locale)
             );
-            $template = $this->addTemplateToProduct($product, $locale);
-            $this->createOrUpdateProductSaleElements($product, $productData, $locale, $template);
-            //            $this->addImages($product, $productData);
+            $this->addImages($product, $productData);
+            $this->createOrUpdateProductSaleElements($product, $productData, $locale);
+            $this->addFeaturesToProduct($product, $productData, $locale);
         }
 
         fclose($handle);
@@ -252,7 +267,7 @@ class CsvProductImporterService
     }
 
     /**
-     * @throws \JsonException
+     * @throws \JsonException|PropelException
      */
     private function dispatchProductEvent(ProductCreateEvent|ProductUpdateEvent $event, array $productData, string $locale, Category $category, Country $country, bool $isNew = false): Product
     {
@@ -271,19 +286,27 @@ class CsvProductImporterService
         }
 
         if ($event instanceof ProductUpdateEvent) {
-            $event->setChapo($productData['Description courte']);
-            $event->setDescription($productData['Description Longue']);
-            $event->setBrandId($this->findOrCreateBrand($productData, $locale)->getId());
+            $event
+            ->setChapo($productData['Description courte'])
+            ->setDescription($productData['Description Longue'])
+            ->setBrandId($this->findOrCreateBrand($productData, $locale)->getId());
         }
-        $this->dispatcher->dispatch($event, $isNew ? TheliaEvents::PRODUCT_CREATE : TheliaEvents::PRODUCT_UPDATE);
+        $event = $this->dispatcher->dispatch($event, $isNew ? TheliaEvents::PRODUCT_CREATE : TheliaEvents::PRODUCT_UPDATE);
+        /** @var Product $product */
+        $product = $event->getProduct();
+        $product->setTemplateId(
+            $this->findOrCreateTemplate($productData[self::LEVEL_1], $locale)
+                ->getId()
+        );
+        $product->save();
 
-        return $event->getProduct();
+        return $product;
     }
 
     /**
      * @throws PropelException
      */
-    private function createOrUpdateProductSaleElements(Product $product, array $productData, string $locale, Template $template): ProductSaleElements
+    private function createOrUpdateProductSaleElements(Product $product, array $productData, string $locale): ProductSaleElements
     {
         $productSaleElement = ProductSaleElementsQuery::create()
             ->filterByProductId($product->getId())
@@ -296,7 +319,7 @@ class CsvProductImporterService
             $attributeAv = $this->findOrCreateAttributeAv($attributeTitle, $attribute, $locale);
             $attributeAvList[] = $attributeAv;
             $attributeAvListIds[] = $attributeAv->getId();
-            $this->addAttributeToTemplate($template, $attribute);
+            $this->addAttributeToTemplate($product->getTemplate(), $attribute);
         }
         if (!$productSaleElement) {
             $event = new ProductSaleElementCreateEvent($product, $attributeAvListIds, 1);
@@ -326,13 +349,6 @@ class CsvProductImporterService
         $this->dispatcher->dispatch($event, TheliaEvents::PRODUCT_UPDATE_PRODUCT_SALE_ELEMENT);
 
         return $event->getProductSaleElement();
-    }
-
-    private function getAttributeColumns(array $productData): array
-    {
-        $filteredData = array_filter(array_keys($productData), static fn ($key) => str_starts_with($key, self::ATTRIBUTE_DISCRIMINATOR));
-
-        return array_intersect_key($productData, array_flip($filteredData));
     }
 
     private function findOrCreateAttribute(string $attributeTitle, string $locale): Attribute
@@ -436,12 +452,117 @@ class CsvProductImporterService
     /**
      * @throws PropelException
      */
-    private function addTemplateToProduct(Product $product, string $locale): Template
+    private function addFeaturesToProduct(Product $product, array $productData, string $locale): void
     {
-        $template = $this->findOrCreateTemplate($product->getCategories()[0]->getTitle(), $locale);
-        $product->setTemplateId($template->getId());
-        $product->save();
-
-        return $template;
+        foreach ($this->getFeatureColumns($productData) as $featureColumn => $featureTitle) {
+            $feature = $this->findOrCreateFeature(substr($featureColumn, 2), $locale);
+            $featureAv = $this->findOrCreateFeatureAv($featureTitle, $feature, $locale);
+            $this->addFeatureToTemplate($product->getTemplate(), $feature);
+            $featureProduct = FeatureProductQuery::create()
+                ->filterByProductId($product->getId())
+                ->filterByFeatureId($feature->getId())
+                ->filterByFeatureAvId($featureAv->getId())
+                ->findOneOrCreate();
+            $featureProduct->save();
+        }
     }
+
+    private function findOrCreateFeature(string $featureTitle, string $locale): Feature
+    {
+        $feature = FeatureQuery::create()
+            ->useFeatureI18nQuery()
+                ->filterByTitle($featureTitle)
+                ->filterByLocale($locale)
+            ->endUse()
+            ->findOne();
+        if ($feature) {
+            return $feature;
+        }
+
+        $event = new FeatureCreateEvent();
+        $event->setTitle($featureTitle)
+            ->setLocale($locale);
+        $this->dispatcher->dispatch($event, TheliaEvents::FEATURE_CREATE);
+
+        return $event->getFeature();
+    }
+
+    private function getColumns(array $productData, string $discriminator): array
+    {
+        $filteredData = array_filter(array_keys($productData), static fn ($key) => str_starts_with($key, $discriminator));
+
+        return array_intersect_key($productData, array_flip($filteredData));
+    }
+
+    private function getFeatureColumns(array $productData): array
+    {
+        return $this->getColumns($productData, self::FEATURE_DISCRIMINATOR);
+    }
+
+    private function getAttributeColumns(array $productData): array
+    {
+        return $this->getColumns($productData, self::ATTRIBUTE_DISCRIMINATOR);
+    }
+
+    private function addFeatureToTemplate(Template $template, Feature $feature): void
+    {
+        $featureTemplate = FeatureTemplateQuery::create()
+            ->filterByFeatureId($feature->getId())
+            ->filterByTemplateId($template->getId())
+            ->findOne();
+        if ($featureTemplate) {
+            return;
+        }
+        $event = new TemplateAddFeatureEvent($template, $feature->getId());
+        $this->dispatcher->dispatch($event, TheliaEvents::TEMPLATE_ADD_FEATURE);
+    }
+
+    private function findOrCreateFeatureAv(string $featureAvTitle, Feature $feature, string $locale): FeatureAv
+    {
+        $featureAv = FeatureAvQuery::create()
+            ->useFeatureAvI18nQuery()
+                ->filterByTitle($featureAvTitle)
+                ->filterByLocale($locale)
+            ->endUse()
+            ->findOne();
+
+        if ($featureAv) {
+            return $featureAv;
+        }
+        $event = new FeatureAvCreateEvent();
+        $event->setTitle($featureAvTitle)
+            ->setLocale($locale)
+            ->setFeatureId($feature->getId());
+
+        $this->dispatcher->dispatch($event, TheliaEvents::FEATURE_AV_CREATE);
+
+        return $event->getFeatureAv();
+    }
+
+    /**
+     * @throws \Exception
+     */
+    private function addImages(Product $product, array $productData): void
+    {
+        $filePath = $productData['IMG'];
+        if (!$filePath){
+            return;
+        }
+        $fileName = basename($filePath);
+
+        $productImage = ProductImageQuery::create()
+            ->filterByProductId($product->getId())
+            ->filterByFile($fileName)
+            ->findOneOrCreate();
+        if (!$productImage->isNew() && file_exists($filePath) && is_file($filePath)) {
+            $this->fileManager->deleteFile($filePath);
+        }
+        $uploadedFile = new UploadedFile($filePath, $fileName);
+        $event = new FileCreateOrUpdateEvent($product->getId());
+        $event->setModel($productImage)
+            ->setUploadedFile($uploadedFile)
+        ;
+        $this->dispatcher->dispatch($event, TheliaEvents::IMAGE_SAVE);
+    }
+
 }
