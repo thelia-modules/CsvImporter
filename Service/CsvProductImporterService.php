@@ -66,16 +66,34 @@ use Thelia\TaxEngine\TaxType\PricePercentTaxType;
 
 class CsvProductImporterService
 {
-    public const LEVEL_1 = 'Niveau 1';
-    public const LEVEL_4 = 'Niveau 4';
-    public const ATTRIBUTE_DISCRIMINATOR = 'D:';
-    public const FEATURE_DISCRIMINATOR = 'C:';
+    public const REF_COLUMN = 'product_reference';
+    public const TITLE_COLUMN = 'product_title';
+    public const FAMILY_COLUMN = 'family';
+    public const SUB_FAMILY_COLUMN = 'sub_family';
+    public const BRAND_COLUMN = 'brand';
+    public const LEVEL1_COLUMN = 'level_1';
+    public const LEVEL2_COLUMN = 'level_2';
+    public const LEVEL3_COLUMN = 'level_3';
+    public const LEVEL4_COLUMN = 'level_4';
+    public const TAX_RULE_COLUMN = 'tax_rule';
+    public const PRICE_EXCL_TAX_COLUMN = 'price_excl_tax';
+    public const PRICE_INCL_TAX_COLUMN = 'price_incl_tax';
+    public const WEIGHT_COLUMN = 'weight';
+    public const EAN_COLUMN = 'ean';
+    public const SHORT_DESCRIPTION_COLUMN = 'short_description';
+    public const LONG_DESCRIPTION_COLUMN = 'long_description';
+    public const IMAGE_COLUMN = 'image';
 
-    public const REF_COLUMN = 'Référence Produit (Code)';
+    public const FEATURES = 'features';
+    public const ATTRIBUTES = 'attributes';
 
     private ?string $previousTaxRate = null;
 
-    public function __construct(private EventDispatcherInterface $dispatcher, private FileManager $fileManager)
+    public function __construct(
+        private EventDispatcherInterface $dispatcher,
+        private FileManager $fileManager,
+        private CsvParserService $csvParser
+    )
     {
     }
 
@@ -102,6 +120,8 @@ class CsvProductImporterService
             if (!$productData = array_combine($headers, $data)) {
                 throw new \RuntimeException('Problem while combining headers and data.');
             }
+            $productData = $this->csvParser->mapToArray($productData);
+
             if (!$productData[self::REF_COLUMN]) {
                 Tlog::getInstance()->addWarning('Missing Product reference');
                 continue;
@@ -125,7 +145,7 @@ class CsvProductImporterService
      */
     private function findOrCreateTax(array $productData, Country $country, string $locale): TaxRule
     {
-        $taxLabel = $productData['Règle de taxe'] ?: $this->previousTaxRate;
+        $taxLabel = $productData[self::TAX_RULE_COLUMN] ?: $this->previousTaxRate;
         $this->previousTaxRate = $taxLabel;
         $taxPercent = $this->extractTaxPercentage($taxLabel);
         $taxTitle = "TVA $taxLabel";
@@ -210,9 +230,9 @@ class CsvProductImporterService
     /**
      * @throws PropelException
      */
-    private function findOrCreateCategory(array $productData, string $locale, Category $parent = null, string $level = self::LEVEL_1): Category
+    private function findOrCreateCategory(array $productData, string $locale, Category $parent = null, string $level = self::LEVEL1_COLUMN): Category
     {
-        if ($level === self::LEVEL_4 || !$productData[$level]) {
+        if ($level === self::LEVEL4_COLUMN || !$productData[$level]) {
             if (null === $parent) {
                 throw new \RuntimeException('A product must have at least one category');
             }
@@ -258,7 +278,7 @@ class CsvProductImporterService
     {
         $product = ProductQuery::create()
             ->useProductI18nQuery()
-            ->filterByTitle($productData['Titre du produit (Description)'])
+            ->filterByTitle($productData[self::TITLE_COLUMN])
             ->filterByLocale($locale)
             ->endUse()
             ->findOne();
@@ -267,7 +287,7 @@ class CsvProductImporterService
         }
 
         $newProduct = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
-        Tlog::getInstance()->addInfo('Produit créé : '.$productData['Titre du produit (Description)']);
+        Tlog::getInstance()->addInfo('Produit créé : '.$productData[self::TITLE_COLUMN]);
 
         return $this->dispatchProductEvent(new ProductUpdateEvent($newProduct->getId()), $productData, $locale, $category, $country);
     }
@@ -280,10 +300,10 @@ class CsvProductImporterService
         $event
             ->setRef($productData[self::REF_COLUMN])
             ->setLocale($locale)
-            ->setTitle($productData['Titre du produit (Description)'])
+            ->setTitle($productData[self::TITLE_COLUMN])
             ->setDefaultCategory($category->getId())
-            ->setBasePrice($productData['Prix du Produit HT'])
-            ->setBaseWeight($productData['Poids'] ?? 0)
+            ->setBasePrice($productData[self::PRICE_EXCL_TAX_COLUMN])
+            ->setBaseWeight($productData[self::WEIGHT_COLUMN] ?? 0)
             ->setTaxRuleId($this->findOrCreateTax($productData, $country, $locale)->getId());
 
         if ($isNew) {
@@ -293,15 +313,15 @@ class CsvProductImporterService
 
         if ($event instanceof ProductUpdateEvent) {
             $event
-                ->setChapo($productData['Description courte'])
-                ->setDescription($productData['Description Longue'])
+                ->setChapo($productData[self::SHORT_DESCRIPTION_COLUMN])
+                ->setDescription($productData[self::LONG_DESCRIPTION_COLUMN])
                 ->setBrandId($this->findOrCreateBrand($productData, $locale)->getId());
         }
         $event = $this->dispatcher->dispatch($event, $isNew ? TheliaEvents::PRODUCT_CREATE : TheliaEvents::PRODUCT_UPDATE);
         /** @var Product $product */
         $product = $event->getProduct();
         $product->setTemplateId(
-            $this->findOrCreateTemplate($productData[self::LEVEL_1], $locale)
+            $this->findOrCreateTemplate($productData[self::LEVEL1_COLUMN], $locale)
                 ->getId()
         );
         $product->save();
@@ -321,7 +341,7 @@ class CsvProductImporterService
             ->findOne();
         $attributeAvList = [];
         $attributeAvListIds = [];
-        foreach ($this->getAttributeColumns($productData) as $attributeColumn => $attributeTitle) {
+        foreach ($productData[self::ATTRIBUTES] as $attributeColumn => $attributeTitle) {
             $attribute = $this->findOrCreateAttribute(substr($attributeColumn, 2), $locale);
             $attributeAv = $this->findOrCreateAttributeAv($attributeTitle, $attribute, $locale);
             $attributeAvList[] = $attributeAv;
@@ -345,10 +365,10 @@ class CsvProductImporterService
             }
         }
         $event = new ProductSaleElementUpdateEvent($product, $productSaleElement->getId());
-        $event->setWeight($productData['Poids'])
+        $event->setWeight($productData[self::WEIGHT_COLUMN])
             ->setProductSaleElement($productSaleElement)
-            ->setPrice($productData['Prix du Produit HT'])
-            ->setEanCode($productData['EAN'])
+            ->setPrice($productData[self::PRICE_EXCL_TAX_COLUMN])
+            ->setEanCode($productData[self::EAN_COLUMN])
             ->setReference($productData[self::REF_COLUMN])
             ->setCurrencyId(1)
             ->setTaxRuleId($product->getTaxRuleId())
@@ -422,7 +442,7 @@ class CsvProductImporterService
 
     private function findOrCreateBrand(array $productData, string $locale): Brand
     {
-        $brandTitle = $productData['Marque'];
+        $brandTitle = $productData[self::BRAND_COLUMN];
         $brand = BrandQuery::create()
             ->useBrandI18nQuery()
             ->filterByTitle($brandTitle)
@@ -461,7 +481,6 @@ class CsvProductImporterService
     }
 
     /**
-     * @throws PropelException
      */
     private function addAttributeToTemplate(Template $template, Attribute $attribute): void
     {
@@ -481,7 +500,7 @@ class CsvProductImporterService
      */
     private function addFeaturesToProduct(Product $product, array $productData, string $locale): void
     {
-        foreach ($this->getFeatureColumns($productData) as $featureColumn => $featureTitle) {
+        foreach ($productData[self::FEATURES] as $featureColumn => $featureTitle) {
             $feature = $this->findOrCreateFeature(substr($featureColumn, 2), $locale);
             $featureAv = $this->findOrCreateFeatureAv($featureTitle, $feature, $locale);
             $this->addFeatureToTemplate($product->getTemplate(), $feature);
@@ -514,22 +533,7 @@ class CsvProductImporterService
         return $event->getFeature();
     }
 
-    private function getColumns(array $productData, string $discriminator): array
-    {
-        $filteredData = array_filter(array_keys($productData), static fn ($key) => str_starts_with($key, $discriminator));
 
-        return array_intersect_key($productData, array_flip($filteredData));
-    }
-
-    private function getFeatureColumns(array $productData): array
-    {
-        return $this->getColumns($productData, self::FEATURE_DISCRIMINATOR);
-    }
-
-    private function getAttributeColumns(array $productData): array
-    {
-        return $this->getColumns($productData, self::ATTRIBUTE_DISCRIMINATOR);
-    }
 
     private function addFeatureToTemplate(Template $template, Feature $feature): void
     {
@@ -571,7 +575,7 @@ class CsvProductImporterService
      */
     private function addImages(Product $product, ProductSaleElements $productSaleElements, array $productData): void
     {
-        $filePath = $productData['IMG'];
+        $filePath = $productData[self::IMAGE_COLUMN];
         if (!$filePath) {
             return;
         }
