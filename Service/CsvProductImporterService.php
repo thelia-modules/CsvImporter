@@ -115,8 +115,8 @@ class CsvProductImporterService
             throw new \RuntimeException("Cannot open file: $filePath");
         }
 
-        $headers = fgetcsv($handle, 1000, ',');
-        while (($data = fgetcsv($handle, 1000, ',')) !== false) {
+        $headers = fgetcsv($handle, 1000);
+        while (($data = fgetcsv($handle, 1000)) !== false) {
             if (!$productData = array_combine($headers, $data)) {
                 throw new \RuntimeException('Problem while combining headers and data.');
             }
@@ -124,6 +124,10 @@ class CsvProductImporterService
 
             if (!$productData[self::REF_COLUMN]) {
                 Tlog::getInstance()->addWarning('Missing Product reference');
+                continue;
+            }
+            if (!$productData[self::PRICE_EXCL_TAX_COLUMN]) {
+                Tlog::getInstance()->addWarning('Missing Product price for:'. $productData[self::REF_COLUMN]);
                 continue;
             }
             $product = $this->findOrCreateProduct(
@@ -304,13 +308,9 @@ class CsvProductImporterService
             ->setDefaultCategory($category->getId())
             ->setBasePrice($productData[self::PRICE_EXCL_TAX_COLUMN])
             ->setBaseWeight($productData[self::WEIGHT_COLUMN] ?? 0)
-            ->setTaxRuleId($this->findOrCreateTax($productData, $country, $locale)->getId());
-
-        if ($isNew) {
-            $event->setVisible(1)
-                ->setCurrencyId(1);
-        }
-
+            ->setTaxRuleId($this->findOrCreateTax($productData, $country, $locale)->getId())
+            ->setVisible(1)
+            ->setCurrencyId(1);
         if ($event instanceof ProductUpdateEvent) {
             $event
                 ->setChapo($productData[self::SHORT_DESCRIPTION_COLUMN])
@@ -342,7 +342,7 @@ class CsvProductImporterService
         $attributeAvList = [];
         $attributeAvListIds = [];
         foreach ($productData[self::ATTRIBUTES] as $attributeColumn => $attributeTitle) {
-            $attribute = $this->findOrCreateAttribute(substr($attributeColumn, 2), $locale);
+            $attribute = $this->findOrCreateAttribute($attributeColumn, $locale);
             $attributeAv = $this->findOrCreateAttributeAv($attributeTitle, $attribute, $locale);
             $attributeAvList[] = $attributeAv;
             $attributeAvListIds[] = $attributeAv->getId();
@@ -501,7 +501,7 @@ class CsvProductImporterService
     private function addFeaturesToProduct(Product $product, array $productData, string $locale): void
     {
         foreach ($productData[self::FEATURES] as $featureColumn => $featureTitle) {
-            $feature = $this->findOrCreateFeature(substr($featureColumn, 2), $locale);
+            $feature = $this->findOrCreateFeature($featureColumn, $locale);
             $featureAv = $this->findOrCreateFeatureAv($featureTitle, $feature, $locale);
             $this->addFeatureToTemplate($product->getTemplate(), $feature);
             $featureProduct = FeatureProductQuery::create()
@@ -588,11 +588,25 @@ class CsvProductImporterService
         if (!$productImage->isNew() && file_exists($filePath) && is_file($filePath)) {
             $this->fileManager->deleteFile($filePath);
         }
-        $uploadedFile = new UploadedFile($filePath, $fileName);
+
+        $uploadedFile = new UploadedFile($this->copyFile($filePath), $fileName);
         $event = new FileCreateOrUpdateEvent($product->getId());
         $event->setModel($productImage)
             ->setUploadedFile($uploadedFile);
         $this->dispatcher->dispatch($event, TheliaEvents::IMAGE_SAVE);
         $this->addProductSaleElementImage($productSaleElements, $product, $event->getUploadedFile()->getFilename());
+    }
+
+    private function copyFile(string $filePath): string
+    {
+        $fileInfo = pathinfo($filePath);
+        $directory = $fileInfo['dirname'];
+        $filename = $fileInfo['filename'];
+        $extension = $fileInfo['extension'];
+
+        $newFilename = $filename . '_copy.' . $extension;
+        $newFilePath = $directory . '/' . $newFilename;
+        copy($filePath, $newFilePath);
+        return $newFilePath;
     }
 }
