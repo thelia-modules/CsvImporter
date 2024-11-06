@@ -21,7 +21,7 @@ class ImportProducts extends ContainerAwareCommand
     {
         $this
             ->setName('csvimporter:import-products')
-            ->addArgument(self::FILE_PATH, InputArgument::REQUIRED, 'Le chemin vers le fichier CSV à importer');
+            ->addArgument(self::FILE_PATH, InputArgument::REQUIRED, 'Path to CSV file to import');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -29,14 +29,14 @@ class ImportProducts extends ContainerAwareCommand
         $this->initRequest();
         $filePath = $input->getArgument(self::FILE_PATH);
 
-        $output->writeln("<info>Début de l'importation des produits depuis le fichier CSV : $filePath</info>");
+        $output->writeln("<info>Starting to import  : $filePath</info>");
 
         try {
             $this->csvProductImporterService->importProductsFromCsv($filePath);
-            $output->writeln('<info>Importation terminée avec succès !</info>');
+            $output->writeln('<info>Import is a success !</info>');
         } catch (\Exception $e) {
             Tlog::getInstance()->addError("Erreur lors de l'importation : ".$e->getMessage());
-            $output->writeln('<error>Erreur : '.$e->getMessage().'</error>');
+            $output->writeln('<error>Error : '.$e->getMessage().'</error>');
 
             return Command::FAILURE;
         }

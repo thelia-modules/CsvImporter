@@ -47,7 +47,6 @@ use Thelia\Model\BrandQuery;
 use Thelia\Model\Category;
 use Thelia\Model\CategoryQuery;
 use Thelia\Model\Country;
-use Thelia\Model\Event\ProductSaleElementsProductImageEvent;
 use Thelia\Model\Feature;
 use Thelia\Model\FeatureAv;
 use Thelia\Model\FeatureAvQuery;
@@ -58,6 +57,7 @@ use Thelia\Model\Product;
 use Thelia\Model\ProductImageQuery;
 use Thelia\Model\ProductQuery;
 use Thelia\Model\ProductSaleElements;
+use Thelia\Model\ProductSaleElementsProductImageQuery;
 use Thelia\Model\ProductSaleElementsQuery;
 use Thelia\Model\TaxRule;
 use Thelia\Model\TaxRuleCountryQuery;
@@ -71,6 +71,8 @@ class CsvProductImporterService
     public const ATTRIBUTE_DISCRIMINATOR = 'D:';
     public const FEATURE_DISCRIMINATOR = 'C:';
 
+    public const REF_COLUMN = 'Référence Produit (Code)';
+
     private ?string $previousTaxRate = null;
 
     public function __construct(private EventDispatcherInterface $dispatcher, private FileManager $fileManager)
@@ -79,6 +81,7 @@ class CsvProductImporterService
 
     /**
      * @throws PropelException
+     * @throws \Exception
      */
     public function importProductsFromCsv($filePath, Country $country = null, string $locale = 'fr_FR'): void
     {
@@ -87,11 +90,11 @@ class CsvProductImporterService
         }
         $filesystem = new Filesystem();
         if (!$filesystem->exists($filePath)) {
-            throw new \RuntimeException("Le fichier spécifié n'existe pas : $filePath");
+            throw new \RuntimeException("File does not exists: $filePath");
         }
 
         if (($handle = fopen($filePath, 'r')) === false) {
-            throw new \RuntimeException("Impossible d'ouvrir le fichier : $filePath");
+            throw new \RuntimeException("Cannot open file: $filePath");
         }
 
         $headers = fgetcsv($handle, 1000, ',');
@@ -99,19 +102,22 @@ class CsvProductImporterService
             if (!$productData = array_combine($headers, $data)) {
                 throw new \RuntimeException('Problem while combining headers and data.');
             }
+            if (!$productData[self::REF_COLUMN]) {
+                Tlog::getInstance()->addWarning('Missing Product reference');
+                continue;
+            }
             $product = $this->findOrCreateProduct(
                 $productData,
                 $country,
                 $locale,
                 $this->findOrCreateCategory($productData, $locale)
             );
-            $this->addImages($product, $productData);
             $this->createOrUpdateProductSaleElements($product, $productData, $locale);
             $this->addFeaturesToProduct($product, $productData, $locale);
         }
 
         fclose($handle);
-        Tlog::getInstance()->addInfo('Importation et mise à jour terminées.');
+        Tlog::getInstance()->addInfo('End of products import.');
     }
 
     /**
@@ -272,7 +278,7 @@ class CsvProductImporterService
     private function dispatchProductEvent(ProductCreateEvent|ProductUpdateEvent $event, array $productData, string $locale, Category $category, Country $country, bool $isNew = false): Product
     {
         $event
-            ->setRef($productData['Référence Produit (Code)'])
+            ->setRef($productData[self::REF_COLUMN])
             ->setLocale($locale)
             ->setTitle($productData['Titre du produit (Description)'])
             ->setDefaultCategory($category->getId())
@@ -287,9 +293,9 @@ class CsvProductImporterService
 
         if ($event instanceof ProductUpdateEvent) {
             $event
-            ->setChapo($productData['Description courte'])
-            ->setDescription($productData['Description Longue'])
-            ->setBrandId($this->findOrCreateBrand($productData, $locale)->getId());
+                ->setChapo($productData['Description courte'])
+                ->setDescription($productData['Description Longue'])
+                ->setBrandId($this->findOrCreateBrand($productData, $locale)->getId());
         }
         $event = $this->dispatcher->dispatch($event, $isNew ? TheliaEvents::PRODUCT_CREATE : TheliaEvents::PRODUCT_UPDATE);
         /** @var Product $product */
@@ -305,12 +311,13 @@ class CsvProductImporterService
 
     /**
      * @throws PropelException
+     * @throws \Exception
      */
     private function createOrUpdateProductSaleElements(Product $product, array $productData, string $locale): ProductSaleElements
     {
         $productSaleElement = ProductSaleElementsQuery::create()
             ->filterByProductId($product->getId())
-            ->filterByRef($productData['Référence Produit (Code)'])
+            ->filterByRef($productData[self::REF_COLUMN])
             ->findOne();
         $attributeAvList = [];
         $attributeAvListIds = [];
@@ -342,13 +349,33 @@ class CsvProductImporterService
             ->setProductSaleElement($productSaleElement)
             ->setPrice($productData['Prix du Produit HT'])
             ->setEanCode($productData['EAN'])
-            ->setReference($productData['Référence Produit (Code)'])
+            ->setReference($productData[self::REF_COLUMN])
             ->setCurrencyId(1)
             ->setTaxRuleId($product->getTaxRuleId())
             ->setProduct($product);
         $this->dispatcher->dispatch($event, TheliaEvents::PRODUCT_UPDATE_PRODUCT_SALE_ELEMENT);
+        $this->addImages($product, $event->getProductSaleElement(), $productData);
 
         return $event->getProductSaleElement();
+    }
+
+    /**
+     * @throws PropelException
+     */
+    private function addProductSaleElementImage(ProductSaleElements $productSaleElement, Product $product, string $fileName): void
+    {
+        $productImage = ProductImageQuery::create()
+            ->filterByFile($fileName)
+            ->filterByProductId($product->getId())
+            ->findOne();
+        if (!$productImage) {
+            throw new \RuntimeException('Missing product image ID');
+        }
+        ProductSaleElementsProductImageQuery::create()
+            ->filterByProductSaleElementsId($productSaleElement->getId())
+            ->filterByProductImageId($productImage->getId())
+            ->findOneOrCreate()
+            ->save();
     }
 
     private function findOrCreateAttribute(string $attributeTitle, string $locale): Attribute
@@ -471,8 +498,8 @@ class CsvProductImporterService
     {
         $feature = FeatureQuery::create()
             ->useFeatureI18nQuery()
-                ->filterByTitle($featureTitle)
-                ->filterByLocale($locale)
+            ->filterByTitle($featureTitle)
+            ->filterByLocale($locale)
             ->endUse()
             ->findOne();
         if ($feature) {
@@ -521,8 +548,8 @@ class CsvProductImporterService
     {
         $featureAv = FeatureAvQuery::create()
             ->useFeatureAvI18nQuery()
-                ->filterByTitle($featureAvTitle)
-                ->filterByLocale($locale)
+            ->filterByTitle($featureAvTitle)
+            ->filterByLocale($locale)
             ->endUse()
             ->findOne();
 
@@ -542,10 +569,10 @@ class CsvProductImporterService
     /**
      * @throws \Exception
      */
-    private function addImages(Product $product, array $productData): void
+    private function addImages(Product $product, ProductSaleElements $productSaleElements, array $productData): void
     {
         $filePath = $productData['IMG'];
-        if (!$filePath){
+        if (!$filePath) {
             return;
         }
         $fileName = basename($filePath);
@@ -560,9 +587,8 @@ class CsvProductImporterService
         $uploadedFile = new UploadedFile($filePath, $fileName);
         $event = new FileCreateOrUpdateEvent($product->getId());
         $event->setModel($productImage)
-            ->setUploadedFile($uploadedFile)
-        ;
+            ->setUploadedFile($uploadedFile);
         $this->dispatcher->dispatch($event, TheliaEvents::IMAGE_SAVE);
+        $this->addProductSaleElementImage($productSaleElements, $product, $event->getUploadedFile()->getFilename());
     }
-
 }
