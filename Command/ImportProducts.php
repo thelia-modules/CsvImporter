@@ -50,7 +50,7 @@ class ImportProducts extends ContainerAwareCommand
             $count++;
 
             try {
-                $this->csvProductImporterService->importProductsFromCsv($file->getPathname());
+                $this->csvProductImporterService->importProductsFromCsv($file->getPathname(), $baseDir);
 
                 $output->writeln('<info>Import is a success !</info>');
             } catch (\Exception $e) {

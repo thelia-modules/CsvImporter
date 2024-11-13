@@ -91,8 +91,8 @@ class CsvProductImporterService
 
     public function __construct(
         private readonly EventDispatcherInterface $dispatcher,
-        private readonly FileManager $fileManager,
-        private readonly CsvParserService $csvParser
+        private readonly FileManager              $fileManager,
+        private readonly CsvParserService         $csvParser
     )
     {
     }
@@ -101,7 +101,7 @@ class CsvProductImporterService
      * @throws PropelException
      * @throws \Exception
      */
-    public function importProductsFromCsv($filePath, Country $country = null, string $locale = 'fr_FR'): void
+    public function importProductsFromCsv(string $filePath, string $basedir, Country $country = null, string $locale = 'fr_FR'): void
     {
         if (null === $country) {
             $country = Country::getDefaultCountry();
@@ -127,7 +127,7 @@ class CsvProductImporterService
                 continue;
             }
             if (!$productData[self::PRICE_EXCL_TAX_COLUMN]) {
-                Tlog::getInstance()->addWarning('Missing Product price for:'. $productData[self::REF_COLUMN]);
+                Tlog::getInstance()->addWarning('Missing Product price for:' . $productData[self::REF_COLUMN]);
                 continue;
             }
             $product = $this->findOrCreateProduct(
@@ -136,7 +136,7 @@ class CsvProductImporterService
                 $locale,
                 $this->findOrCreateCategory($productData, $locale)
             );
-            $this->createOrUpdateProductSaleElements($product, $productData, $locale);
+            $this->createOrUpdateProductSaleElements($product, $productData, $locale, $basedir);
             $this->addFeaturesToProduct($product, $productData, $locale);
         }
 
@@ -202,7 +202,7 @@ class CsvProductImporterService
         }
 
         $taxEvent->setId($taxEvent->getTax()->getId());
-        Tlog::getInstance()->info('Created tax ID='.$taxEvent->getTax()->getId()." for tax $taxTitle");
+        Tlog::getInstance()->info('Created tax ID=' . $taxEvent->getTax()->getId() . " for tax $taxTitle");
 
         $this->dispatcher->dispatch($taxEvent, TheliaEvents::TAX_UPDATE);
 
@@ -224,7 +224,7 @@ class CsvProductImporterService
 
         $this->dispatcher->dispatch($taxRuleEvent, TheliaEvents::TAX_RULE_TAXES_UPDATE);
 
-        Tlog::getInstance()->info('Created tax rule ID='.$taxRuleEvent->getTaxRule()?->getId()." for $taxTitle");
+        Tlog::getInstance()->info('Created tax rule ID=' . $taxRuleEvent->getTaxRule()?->getId() . " for $taxTitle");
 
         $this->dispatcher->dispatch($taxRuleEvent, TheliaEvents::TAX_RULE_UPDATE);
 
@@ -268,7 +268,7 @@ class CsvProductImporterService
     public function incrementLevel(string $level): string
     {
         if (preg_match('/(\d+)$/', $level, $matches)) {
-            $newNumber = (int) $matches[1] + 1;
+            $newNumber = (int)$matches[1] + 1;
 
             return preg_replace('/\d+$/', $newNumber, $level);
         }
@@ -276,11 +276,6 @@ class CsvProductImporterService
     }
 
     /**
-     * @param array $productData
-     * @param Country $country
-     * @param string $locale
-     * @param Category $category
-     * @return Product
      * @throws PropelException
      * @throws \JsonException
      */
@@ -297,7 +292,7 @@ class CsvProductImporterService
         }
 
         $newProduct = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
-        Tlog::getInstance()->addInfo('Produit créé : '.$productData[self::TITLE_COLUMN]);
+        Tlog::getInstance()->addInfo('Produit créé : ' . $productData[self::TITLE_COLUMN]);
 
         return $this->dispatchProductEvent(new ProductUpdateEvent($newProduct->getId()), $productData, $locale, $category, $country);
     }
@@ -346,7 +341,7 @@ class CsvProductImporterService
      * @throws PropelException
      * @throws \Exception
      */
-    private function createOrUpdateProductSaleElements(Product $product, array $productData, string $locale): ProductSaleElements
+    private function createOrUpdateProductSaleElements(Product $product, array $productData, string $locale, string $baseDir): ProductSaleElements
     {
         $productSaleElement = ProductSaleElementsQuery::create()
             ->filterByProductId($product->getId())
@@ -374,7 +369,6 @@ class CsvProductImporterService
                     ->filterByAttributeAvId($attributeAv->getId())
                     ->findOneOrCreate();
                 $attributeCombination->save();
-                $productSaleElement->addAttributeCombination($attributeCombination);
             }
         }
         $event = new ProductSaleElementUpdateEvent($product, $productSaleElement->getId());
@@ -387,7 +381,7 @@ class CsvProductImporterService
             ->setTaxRuleId($product->getTaxRuleId())
             ->setProduct($product);
         $this->dispatcher->dispatch($event, TheliaEvents::PRODUCT_UPDATE_PRODUCT_SALE_ELEMENT);
-        $this->addImages($product, $event->getProductSaleElement(), $productData);
+        $this->addImages($product, $event->getProductSaleElement(), $productData, $baseDir);
 
         return $event->getProductSaleElement();
     }
@@ -493,8 +487,6 @@ class CsvProductImporterService
         return $event->getTemplate();
     }
 
-    /**
-     */
     private function addAttributeToTemplate(Template $template, Attribute $attribute): void
     {
         $attributeTemplate = AttributeTemplateQuery::create()
@@ -546,8 +538,6 @@ class CsvProductImporterService
         return $event->getFeature();
     }
 
-
-
     private function addFeatureToTemplate(Template $template, Feature $feature): void
     {
         $featureTemplate = FeatureTemplateQuery::create()
@@ -586,16 +576,17 @@ class CsvProductImporterService
     /**
      * @throws \Exception
      */
-    private function addImages(Product $product, ProductSaleElements $productSaleElements, array $productData): void
+    private function addImages(Product $product, ProductSaleElements $productSaleElements, array $productData, $baseDir): void
     {
-        $filePath = $productData[self::IMAGE_COLUMN];
+        $filePath = $baseDir . '/' . $productData[self::IMAGE_COLUMN];
 
         if (!$filePath) {
             return;
         }
 
-        if (! file_exists($filePath)) {
+        if (!file_exists($filePath)) {
             Tlog::getInstance()->addWarning('Image not found : ' . $filePath);
+
             return;
         }
 
@@ -627,6 +618,7 @@ class CsvProductImporterService
         $newFilename = $filename . '_copy.' . $extension;
         $newFilePath = $directory . '/' . $newFilename;
         copy($filePath, $newFilePath);
+
         return $newFilePath;
     }
 }
