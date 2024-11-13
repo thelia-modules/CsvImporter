@@ -126,6 +126,18 @@ class CsvProductImporterService
                 Tlog::getInstance()->addWarning('Missing Product reference');
                 continue;
             }
+            if (!$productData[self::TITLE_COLUMN]) {
+                Tlog::getInstance()->addWarning('Missing Product title');
+                continue;
+            }
+            if (!$productData[self::LEVEL1_COLUMN]) {
+                Tlog::getInstance()->addWarning('Missing Product category');
+                continue;
+            }
+            if (!$productData[self::TAX_RULE_COLUMN]) {
+                Tlog::getInstance()->addWarning('Missing Product tax rule');
+                continue;
+            }
             if (!$productData[self::PRICE_EXCL_TAX_COLUMN]) {
                 Tlog::getInstance()->addWarning('Missing Product price for:' . $productData[self::REF_COLUMN]);
                 continue;
@@ -283,8 +295,8 @@ class CsvProductImporterService
     {
         $product = ProductQuery::create()
             ->useProductI18nQuery()
-                ->filterByTitle($productData[self::TITLE_COLUMN])
-                ->filterByLocale($locale)
+            ->filterByTitle($productData[self::TITLE_COLUMN])
+            ->filterByLocale($locale)
             ->endUse()
             ->findOne();
         if ($product) {
@@ -381,7 +393,10 @@ class CsvProductImporterService
             ->setTaxRuleId($product->getTaxRuleId())
             ->setProduct($product);
         $this->dispatcher->dispatch($event, TheliaEvents::PRODUCT_UPDATE_PRODUCT_SALE_ELEMENT);
-        $this->addImages($product, $event->getProductSaleElement(), $productData, $baseDir);
+
+        if ($productData[self::IMAGE_COLUMN]) {
+            $this->addImages($product, $event->getProductSaleElement(), $productData, $baseDir);
+        }
 
         return $event->getProductSaleElement();
     }
@@ -506,6 +521,9 @@ class CsvProductImporterService
     private function addFeaturesToProduct(Product $product, array $productData, string $locale): void
     {
         foreach ($productData[self::FEATURES] as $featureColumn => $featureTitle) {
+            if (!$featureTitle) {
+                continue;
+            }
             $feature = $this->findOrCreateFeature($featureColumn, $locale);
             $featureAv = $this->findOrCreateFeatureAv($featureTitle, $feature, $locale);
             $this->addFeatureToTemplate($product->getTemplate(), $feature);
@@ -578,7 +596,7 @@ class CsvProductImporterService
      */
     private function addImages(Product $product, ProductSaleElements $productSaleElements, array $productData, $baseDir): void
     {
-        $filePath = $baseDir . '/' . $productData[self::IMAGE_COLUMN];
+        $filePath = $baseDir . 'Images/'. $productData[self::IMAGE_COLUMN];
 
         if (!$filePath) {
             return;
