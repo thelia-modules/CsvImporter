@@ -7,41 +7,67 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Finder\Finder;
 use Thelia\Command\ContainerAwareCommand;
 use Thelia\Log\Tlog;
 
 class ImportProducts extends ContainerAwareCommand
 {
-    public const FILE_PATH = 'filePath';
-    public function __construct(private CsvProductImporterService $csvProductImporterService)
+    public const DIR_PATH = 'dirPath';
+    public function __construct(private readonly CsvProductImporterService $csvProductImporterService)
     {
         parent::__construct();
     }
+
     protected function configure(): void
     {
         $this
-            ->setName('csvimporter:import-products')
-            ->addArgument(self::FILE_PATH, InputArgument::REQUIRED, 'Path to CSV file to import');
+            ->setName('csvimporter:import-catalog')
+            ->addArgument(self::DIR_PATH, InputArgument::REQUIRED, 'Path to a directory which contains CSV file(s) and Images directory');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->initRequest();
-        $filePath = $input->getArgument(self::FILE_PATH);
+        $baseDir = $input->getArgument(self::DIR_PATH);
 
-        $output->writeln("<info>Starting to import  : $filePath</info>");
+        $finder = Finder::create()
+            ->files()
+            ->in($baseDir)
+            ->depth(0)
+            ->name('*.csv')
+        ;
 
-        try {
-            $this->csvProductImporterService->importProductsFromCsv($filePath);
-            $output->writeln('<info>Import is a success !</info>');
-        } catch (\Exception $e) {
-            Tlog::getInstance()->addError("Erreur lors de l'importation : ".$e->getMessage());
-            $output->writeln('<error>Error : '.$e->getMessage().'</error>');
+        $output->writeln("<info>Fetching directory $baseDir</info>");
 
-            return Command::FAILURE;
+        $return = Command::SUCCESS;
+
+        $count = $errors = 0;
+
+        foreach ($finder->getIterator() as $file) {
+            $output->writeln("<info>Starting to import  : ".$file->getBasename()."</info>");
+
+            $count++;
+
+            try {
+                $this->csvProductImporterService->importProductsFromCsv($file->getPathname());
+
+                $output->writeln('<info>Import is a success !</info>');
+            } catch (\Exception $e) {
+                Tlog::getInstance()->addError("Erreur lors de l'importation : ".$e->getMessage());
+                $output->writeln('<error>Error : '.$e->getMessage().'</error>');
+                if ($e->getPrevious()) {
+                    $output->writeln('<error>Caused by : '.$e->getPrevious()->getMessage().'</error>');
+                }
+
+                $return = Command::FAILURE;
+
+                $errors++;
+            }
         }
 
-        return Command::SUCCESS;
-    }
+        $output->writeln("<info>$count file(s) processed, $errors error(s).</info>");
 
+        return $return;
+    }
 }

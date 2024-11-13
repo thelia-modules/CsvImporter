@@ -13,7 +13,7 @@
 namespace CsvImporter\Service;
 
 use Propel\Runtime\Exception\PropelException;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Thelia\Core\Event\Attribute\AttributeAvCreateEvent;
@@ -55,7 +55,6 @@ use Thelia\Model\FeatureQuery;
 use Thelia\Model\FeatureTemplateQuery;
 use Thelia\Model\Product;
 use Thelia\Model\ProductImageQuery;
-use Thelia\Model\ProductQuery;
 use Thelia\Model\ProductSaleElements;
 use Thelia\Model\ProductSaleElementsProductImageQuery;
 use Thelia\Model\ProductSaleElementsQuery;
@@ -90,9 +89,9 @@ class CsvProductImporterService
     private ?string $previousTaxRate = null;
 
     public function __construct(
-        private EventDispatcherInterface $dispatcher,
-        private FileManager $fileManager,
-        private CsvParserService $csvParser
+        private readonly EventDispatcherInterface $dispatcher,
+        private readonly FileManager $fileManager,
+        private readonly CsvParserService $csvParser
     )
     {
     }
@@ -111,12 +110,12 @@ class CsvProductImporterService
             throw new \RuntimeException("File does not exists: $filePath");
         }
 
-        if (($handle = fopen($filePath, 'r')) === false) {
+        if (($handle = fopen($filePath, 'rb')) === false) {
             throw new \RuntimeException("Cannot open file: $filePath");
         }
 
-        $headers = fgetcsv($handle, 1000);
-        while (($data = fgetcsv($handle, 1000)) !== false) {
+        $headers = fgetcsv($handle);
+        while (($data = fgetcsv($handle)) !== false) {
             if (!$productData = array_combine($headers, $data)) {
                 throw new \RuntimeException('Problem while combining headers and data.');
             }
@@ -160,7 +159,7 @@ class CsvProductImporterService
         }
 
         $taxEvent = $this->createTax($locale, $taxTitle, $taxPercent);
-        $taxRuleEvent = $this->createTaxRule($locale, $taxTitle, $country, $taxEvent->getTax()->getId());
+        $taxRuleEvent = $this->createTaxRule($locale, $taxTitle, $country, $taxEvent->getTax()?->getId());
 
         return $taxRuleEvent->getTaxRule();
     }
@@ -276,20 +275,23 @@ class CsvProductImporterService
     }
 
     /**
+     * @param array $productData
+     * @param Country $country
+     * @param string $locale
+     * @param Category $category
+     * @return Product
      * @throws PropelException
+     * @throws \JsonException
      */
     private function findOrCreateProduct(array $productData, Country $country, string $locale, Category $category): Product
     {
-        $product = ProductQuery::create()
-            ->useProductI18nQuery()
-            ->filterByTitle($productData[self::TITLE_COLUMN])
-            ->filterByLocale($locale)
-            ->endUse()
-            ->findOne();
-        if ($product) {
-            return $product;
+        // Retrouver le produit à partir de la ref du PSE
+        if (null !== $pse = ProductSaleElementsQuery::create()
+            ->findOneByRef($productData[self::REF_COLUMN])) {
+            return $pse->getProduct();
         }
 
+        // Pas de PSE associé à cette ref. Créer un nouveau produit
         $newProduct = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
         Tlog::getInstance()->addInfo('Produit créé : '.$productData[self::TITLE_COLUMN]);
 
@@ -311,19 +313,26 @@ class CsvProductImporterService
             ->setTaxRuleId($this->findOrCreateTax($productData, $country, $locale)->getId())
             ->setVisible(1)
             ->setCurrencyId(1);
+
         if ($event instanceof ProductUpdateEvent) {
             $event
                 ->setChapo($productData[self::SHORT_DESCRIPTION_COLUMN])
                 ->setDescription($productData[self::LONG_DESCRIPTION_COLUMN])
                 ->setBrandId($this->findOrCreateBrand($productData, $locale)->getId());
         }
-        $event = $this->dispatcher->dispatch($event, $isNew ? TheliaEvents::PRODUCT_CREATE : TheliaEvents::PRODUCT_UPDATE);
+
+        $event = $this->dispatcher->dispatch(
+            $event,
+            $isNew ? TheliaEvents::PRODUCT_CREATE : TheliaEvents::PRODUCT_UPDATE
+        );
+
         /** @var Product $product */
         $product = $event->getProduct();
         $product->setTemplateId(
             $this->findOrCreateTemplate($productData[self::LEVEL1_COLUMN], $locale)
                 ->getId()
         );
+
         $product->save();
 
         return $product;
@@ -576,9 +585,16 @@ class CsvProductImporterService
     private function addImages(Product $product, ProductSaleElements $productSaleElements, array $productData): void
     {
         $filePath = $productData[self::IMAGE_COLUMN];
+
         if (!$filePath) {
             return;
         }
+
+        if (! file_exists($filePath)) {
+            Tlog::getInstance()->addWarning('Image not found : ' . $filePath);
+            return;
+        }
+
         $fileName = basename($filePath);
 
         $productImage = ProductImageQuery::create()
@@ -594,7 +610,7 @@ class CsvProductImporterService
         $event->setModel($productImage)
             ->setUploadedFile($uploadedFile);
         $this->dispatcher->dispatch($event, TheliaEvents::IMAGE_SAVE);
-        $this->addProductSaleElementImage($productSaleElements, $product, $event->getUploadedFile()->getFilename());
+        $this->addProductSaleElementImage($productSaleElements, $product, $event->getUploadedFile()?->getFilename());
     }
 
     private function copyFile(string $filePath): string

@@ -18,6 +18,8 @@ class CsvParserService
 
     public function mapToArray(array $productData): array
     {
+        static $lastMappedData = [];
+
         $mappedData = [];
         foreach ($this->getFeatureColumns($productData) as $featureColumn => $featureTitle) {
             $mappedData['features'][substr($featureColumn, 2)] = $productData[$featureColumn];
@@ -26,9 +28,17 @@ class CsvParserService
             $mappedData['attributes'][substr($attributeColumn, 2)] = $productData[$attributeColumn];
         }
         foreach ($this->mapping as $fieldName => $header) {
-            $mappedData[$fieldName] = $productData[$header] ?? null;
-        }
+            // On empty fields, re-use last valid value if we have one
+            $mappedData[$fieldName] =
+                empty($productData[$header]) ?
+                    ($lastMappedData[$fieldName] ?? null) :
+                    $productData[$header]
+                ;
 
+            if (! empty($mappedData[$fieldName])) {
+                $lastMappedData[$fieldName] = $mappedData[$fieldName];
+            }
+        }
 
         return $mappedData;
     }
