@@ -55,6 +55,7 @@ use Thelia\Model\FeatureQuery;
 use Thelia\Model\FeatureTemplateQuery;
 use Thelia\Model\Product;
 use Thelia\Model\ProductImageQuery;
+use Thelia\Model\ProductQuery;
 use Thelia\Model\ProductSaleElements;
 use Thelia\Model\ProductSaleElementsProductImageQuery;
 use Thelia\Model\ProductSaleElementsQuery;
@@ -159,7 +160,7 @@ class CsvProductImporterService
         }
 
         $taxEvent = $this->createTax($locale, $taxTitle, $taxPercent);
-        $taxRuleEvent = $this->createTaxRule($locale, $taxTitle, $country, $taxEvent->getTax()?->getId());
+        $taxRuleEvent = $this->createTaxRule($locale, $taxTitle, $country, $taxEvent->getTax()->getId());
 
         return $taxRuleEvent->getTaxRule();
     }
@@ -285,13 +286,16 @@ class CsvProductImporterService
      */
     private function findOrCreateProduct(array $productData, Country $country, string $locale, Category $category): Product
     {
-        // Retrouver le produit à partir de la ref du PSE
-        if (null !== $pse = ProductSaleElementsQuery::create()
-            ->findOneByRef($productData[self::REF_COLUMN])) {
-            return $pse->getProduct();
+        $product = ProductQuery::create()
+            ->useProductI18nQuery()
+                ->filterByTitle($productData[self::TITLE_COLUMN])
+                ->filterByLocale($locale)
+            ->endUse()
+            ->findOne();
+        if ($product) {
+            return $product;
         }
 
-        // Pas de PSE associé à cette ref. Créer un nouveau produit
         $newProduct = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
         Tlog::getInstance()->addInfo('Produit créé : '.$productData[self::TITLE_COLUMN]);
 
