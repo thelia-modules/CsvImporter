@@ -29,45 +29,9 @@ class ImportProducts extends ContainerAwareCommand
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->initRequest();
-        $baseDir = $input->getArgument(self::DIR_PATH);
 
-        $finder = Finder::create()
-            ->files()
-            ->in($baseDir)
-            ->depth(0)
-            ->name('*.csv')
-        ;
-
-        $output->writeln("<info>Fetching directory $baseDir</info>");
-
-        $return = Command::SUCCESS;
-
-        $count = $errors = 0;
-
-        foreach ($finder->getIterator() as $file) {
-            $output->writeln("<info>Starting to import  : ".$file->getBasename()."</info>");
-
-            $count++;
-
-            try {
-                $this->csvProductImporterService->importProductsFromCsv($file->getPathname(), $baseDir);
-
-                $output->writeln('<info>Import is a success !</info>');
-            } catch (\Exception $e) {
-                Tlog::getInstance()->addError("Erreur lors de l'importation : ".$e->getMessage());
-                $output->writeln('<error>Error : '.$e->getMessage().'</error>');
-                if ($e->getPrevious()) {
-                    $output->writeln('<error>Caused by : '.$e->getPrevious()->getMessage().'</error>');
-                }
-
-                $return = Command::FAILURE;
-
-                $errors++;
-            }
-        }
-
-        $output->writeln("<info>$count file(s) processed, $errors error(s).</info>");
-
-        return $return;
+        return $this->csvProductImporterService->importFromDirectory($input->getArgument(self::DIR_PATH)) ?
+            Command::SUCCESS :
+            Command::FAILURE;
     }
 }

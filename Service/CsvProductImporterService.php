@@ -14,7 +14,9 @@ namespace CsvImporter\Service;
 
 use Propel\Runtime\Exception\PropelException;
 use Psr\EventDispatcher\EventDispatcherInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\Finder\Finder;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Thelia\Core\Event\Attribute\AttributeAvCreateEvent;
 use Thelia\Core\Event\Attribute\AttributeCreateEvent;
@@ -97,6 +99,56 @@ class CsvProductImporterService
     {
     }
 
+    public function importFromDirectory(string $path, ?OutputInterface $output = null): bool
+    {
+        $finder = Finder::create()
+            ->files()
+            ->in($path)
+            ->ignoreDotFiles(true)
+            ->depth(0)
+            ->name('*.csv')
+        ;
+
+        $output?->writeln("<info>Fetching directory $path</info>");
+
+        $count = $errors = 0;
+
+        $success = true;
+
+        foreach ($finder->getIterator() as $file) {
+            Tlog::getInstance()->info("Importation du fichier $file");
+
+            $output?->writeln("<info>Starting to import  : ".$file->getBasename()."</info>");
+
+            $count++;
+
+            try {
+                $this->importProductsFromCsv($file->getPathname(), $path);
+
+                $output?->writeln('<info>Import is a success !</info>');
+
+                Tlog::getInstance()->info("Fichier $file importé.");
+            } catch (\Exception $e) {
+                Tlog::getInstance()->addError("Erreur lors de l'importation de $file : ".$e->getMessage());
+                $output?->writeln('<error>Error : '.$e->getMessage().'</error>');
+
+                if ($e->getPrevious()) {
+                    $output?->writeln('<error>Caused by : '.$e->getPrevious()->getMessage().'</error>');
+                }
+
+                $success = false;
+
+                $errors++;
+            }
+        }
+
+        Tlog::getInstance()->info("$count fichiers(s) traités, $errors erreur(s).");
+
+        $output?->writeln("<info>$count file(s) processed, $errors error(s).</info>");
+
+        return $success;
+    }
+
     /**
      * @throws PropelException
      * @throws \Exception
@@ -115,31 +167,35 @@ class CsvProductImporterService
             throw new \RuntimeException("Cannot open file: $filePath");
         }
 
+        $line = 0;
+
         $headers = fgetcsv($handle);
         while (($data = fgetcsv($handle)) !== false) {
+            $line++;
+
             if (!$productData = array_combine($headers, $data)) {
                 throw new \RuntimeException('Problem while combining headers and data.');
             }
             $productData = $this->csvParser->mapToArray($productData);
 
             if (!$productData[self::REF_COLUMN]) {
-                Tlog::getInstance()->addWarning('Missing Product reference');
+                Tlog::getInstance()->addWarning("Line $line: Missing Product reference");
                 continue;
             }
             if (!$productData[self::TITLE_COLUMN]) {
-                Tlog::getInstance()->addWarning('Missing Product title');
+                Tlog::getInstance()->addWarning("Line $line: Missing Product title");
                 continue;
             }
             if (!$productData[self::LEVEL1_COLUMN]) {
-                Tlog::getInstance()->addWarning('Missing Product category');
+                Tlog::getInstance()->addWarning("Line $line: Missing Product category");
                 continue;
             }
             if (!$productData[self::TAX_RULE_COLUMN]) {
-                Tlog::getInstance()->addWarning('Missing Product tax rule');
+                Tlog::getInstance()->addWarning("Line $line: Missing Product tax rule");
                 continue;
             }
             if (!$productData[self::PRICE_EXCL_TAX_COLUMN]) {
-                Tlog::getInstance()->addWarning('Missing Product price for:' . $productData[self::REF_COLUMN]);
+                Tlog::getInstance()->addWarning("Line $line: Missing Product price for:" . $productData[self::REF_COLUMN]);
                 continue;
             }
             $product = $this->findOrCreateProduct(
@@ -153,7 +209,6 @@ class CsvProductImporterService
         }
 
         fclose($handle);
-        Tlog::getInstance()->addInfo('End of products import.');
     }
 
     /**
@@ -271,6 +326,8 @@ class CsvProductImporterService
                 ->setVisible(1);
             $this->dispatcher->dispatch($createEvent, TheliaEvents::CATEGORY_CREATE);
             $category = $createEvent->getCategory();
+
+            Tlog::getInstance()->info('Created catégory ' . $productData[$level]);
         }
         $this->findOrCreateCategory($productData, $locale, $category, $this->incrementLevel($level));
 
@@ -304,7 +361,7 @@ class CsvProductImporterService
         }
 
         $newProduct = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
-        Tlog::getInstance()->addInfo('Produit créé : ' . $productData[self::TITLE_COLUMN]);
+        Tlog::getInstance()->addInfo('Created product ' . $productData[self::TITLE_COLUMN]);
 
         return $this->dispatchProductEvent(new ProductUpdateEvent($newProduct->getId()), $productData, $locale, $category, $country);
     }

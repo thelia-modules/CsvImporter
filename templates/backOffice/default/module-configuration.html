@@ -1,0 +1,50 @@
+{default_translation_domain domain='freedelivery.bo.default'}
+<div class="general-block-decorator">
+    <div class="row">
+        <div class="col-md-12 title title-without-tabs">
+            {intl l='Import CSV du catalogue'}
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-12">
+            {if $smarty.get.error|default:false}
+                <div class="alert alert-danger">
+                    {$smarty.get.error}
+                </div>
+            {/if}
+            <div class="alert alert-info">
+                Pour importer le catalogue de produits CSV, cliquez le bouton ci-dessous. Les fichiers sont
+                recherchés dans le répertoire FTP "Catalogue".
+            </div>
+            <a href="{url path='/admin/module/csvimporter/import'}" class="btn btn-primary">
+                {intl l="Lancer l'importation"}
+            </a>
+        </div>
+    </div>
+
+    {if $smarty.get.done|default:false}
+        <div class="row" style="margin-top: 20px">
+            <div class="col-xs-12">
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <h3 class="panel-title">
+                            <span class="glyphicon glyphicon-cog"></span>
+                            {intl l="Log de l'importation"}
+                        </h3>
+                    </div>
+
+                    <div class="panel-body">
+                        <div id="log-container" style="font-family: monospace; font-size: 12px; max-height: 400px; overflow-y: scroll">
+                            {$trace_content nofilter}
+                        </div>
+                    </div>
+                    <div class="panel-footer">
+                        <a href="{url path='/admin/module/csvimporter/log'}" class="btn btn-sm btn-primary">{intl l="Télécharger le log complet"}</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {/if}
+</div>
+{default_translation_domain domain='bo.default'}
