@@ -92,11 +92,10 @@ class CsvProductImporterService
     private ?string $previousTaxRate = null;
 
     public function __construct(
-        private readonly EventDispatcherInterface $dispatcher,
-        private readonly FileManager              $fileManager,
-        private readonly CsvParserService         $csvParser
-    )
-    {
+        private EventDispatcherInterface $dispatcher,
+        private FileManager              $fileManager,
+        private CsvParserService         $csvParser
+    ) {
     }
 
     public function importFromDirectory(string $path, ?OutputInterface $output = null): bool
@@ -386,7 +385,11 @@ class CsvProductImporterService
             $event
                 ->setChapo($productData[self::SHORT_DESCRIPTION_COLUMN])
                 ->setDescription($productData[self::LONG_DESCRIPTION_COLUMN])
-                ->setBrandId($this->findOrCreateBrand($productData, $locale)->getId());
+                ;
+        }
+
+        if (null !== $brand = $this->findOrCreateBrand($productData, $locale)) {
+            $event->setBrandId($brand->getId());
         }
 
         $event = $this->dispatcher->dispatch(
@@ -519,17 +522,25 @@ class CsvProductImporterService
         return $event->getAttributeAv();
     }
 
-    private function findOrCreateBrand(array $productData, string $locale): Brand
+    private function findOrCreateBrand(array $productData, string $locale): ?Brand
     {
         $brandTitle = $productData[self::BRAND_COLUMN];
+
+        if (empty($brandTitle)) {
+            Tlog::getInstance()->warning("Brand without title for product reference " . $productData[self::REF_COLUMN]);
+            return null;
+        }
+
         $brand = BrandQuery::create()
             ->useBrandI18nQuery()
             ->filterByTitle($brandTitle)
             ->endUse()
             ->findOne();
+
         if ($brand) {
             return $brand;
         }
+
         $event = new BrandCreateEvent();
         $event
             ->setLocale($locale)
@@ -653,7 +664,15 @@ class CsvProductImporterService
      */
     private function addImages(Product $product, ProductSaleElements $productSaleElements, array $productData, $baseDir): void
     {
-        $filePath = $baseDir . 'Images/'. $productData[self::IMAGE_COLUMN];
+        if (0 === stripos($productData[self::IMAGE_COLUMN], 'http')) {
+            Tlog::getInstance()->warning(
+                "Product ref. ".$product->getRef().": remote images are not supported, please use a local copy (".$productData[self::IMAGE_COLUMN].')'
+            );
+
+            return;
+        }
+
+        $filePath = $baseDir . DS . 'Images'. DS . $productData[self::IMAGE_COLUMN];
 
         if (!$filePath) {
             return;
@@ -665,22 +684,26 @@ class CsvProductImporterService
             return;
         }
 
-        $fileName = basename($filePath);
+        try {
+            $fileName = basename($filePath);
 
-        $productImage = ProductImageQuery::create()
-            ->filterByProductId($product->getId())
-            ->filterByFile($fileName)
-            ->findOneOrCreate();
-        if (!$productImage->isNew() && file_exists($filePath) && is_file($filePath)) {
-            $this->fileManager->deleteFile($filePath);
+            $productImage = ProductImageQuery::create()
+                ->filterByProductId($product->getId())
+                ->filterByFile($fileName)
+                ->findOneOrCreate();
+            if (!$productImage->isNew() && file_exists($filePath) && is_file($filePath)) {
+                $this->fileManager->deleteFile($filePath);
+            }
+
+            $uploadedFile = new UploadedFile($this->copyFile($filePath), $fileName);
+            $event = new FileCreateOrUpdateEvent($product->getId());
+            $event->setModel($productImage)
+                ->setUploadedFile($uploadedFile);
+            $this->dispatcher->dispatch($event, TheliaEvents::IMAGE_SAVE);
+            $this->addProductSaleElementImage($productSaleElements, $product, $event->getUploadedFile()?->getFilename());
+        } catch (\Exception $ex) {
+            Tlog::getInstance()->addError("Echec d'ajout de l'image $filePath : ".$ex->getMessage());
         }
-
-        $uploadedFile = new UploadedFile($this->copyFile($filePath), $fileName);
-        $event = new FileCreateOrUpdateEvent($product->getId());
-        $event->setModel($productImage)
-            ->setUploadedFile($uploadedFile);
-        $this->dispatcher->dispatch($event, TheliaEvents::IMAGE_SAVE);
-        $this->addProductSaleElementImage($productSaleElements, $product, $event->getUploadedFile()?->getFilename());
     }
 
     private function copyFile(string $filePath): string
@@ -691,7 +714,7 @@ class CsvProductImporterService
         $extension = $fileInfo['extension'];
 
         $newFilename = $filename . '_copy.' . $extension;
-        $newFilePath = $directory . '/' . $newFilename;
+        $newFilePath = sys_get_temp_dir() . DS . $fileInfo['basename'];
         copy($filePath, $newFilePath);
 
         return $newFilePath;

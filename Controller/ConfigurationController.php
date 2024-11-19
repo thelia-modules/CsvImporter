@@ -53,9 +53,11 @@ class ConfigurationController extends BaseAdminController
         $catalogDir = THELIA_LOCAL_DIR . 'Catalogue';
 
         if (! is_dir($catalogDir)) {
-            return $this->generateRedirect(URL::getInstance()?->absoluteUrl(
-                '/admin/module/CsvImporter',
-                [ 'error' => 'Répertoire ' . $catalogDir . ' non trouvé.' ])
+            return $this->generateRedirect(
+                URL::getInstance()?->absoluteUrl(
+                    '/admin/module/CsvImporter',
+                    [ 'error' => 'Répertoire ' . $catalogDir . ' non trouvé.' ]
+                )
             );
         }
 

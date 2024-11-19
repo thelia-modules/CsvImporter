@@ -24,7 +24,7 @@ use Thelia\Tools\URL;
  */
 class HookManager extends BaseHook
 {
-    protected const MAX_TRACE_SIZE_IN_BYTES = 40000;
+    protected const MAX_TRACE_SIZE_IN_BYTES = 1000 * 1024;
 
     public function onModuleConfiguration(HookRenderEvent $event)
     {
@@ -40,6 +40,8 @@ class HookManager extends BaseHook
             if (false !== $lineBreakPos = strpos($traces, "\n")) {
                 $traces = substr($traces, $lineBreakPos+1);
             }
+
+            $traces = ">>> Log is over 1MB, download file to get full log\n" . $traces;
         }
 
         $event->add(
