@@ -368,8 +368,14 @@ class CsvProductImporterService
     /**
      * @throws \JsonException|PropelException
      */
-    private function dispatchProductEvent(ProductCreateEvent|ProductUpdateEvent $event, array $productData, string $locale, Category $category, Country $country, bool $isNew = false): Product
-    {
+    private function dispatchProductEvent(
+        ProductCreateEvent|ProductUpdateEvent $event,
+        array $productData,
+        string $locale,
+        Category $category,
+        Country $country,
+        bool $isNew = false
+    ): Product {
         $event
             ->setRef($productData[self::REF_COLUMN])
             ->setLocale($locale)
@@ -386,13 +392,13 @@ class CsvProductImporterService
                 ->setChapo($productData[self::SHORT_DESCRIPTION_COLUMN])
                 ->setDescription($productData[self::LONG_DESCRIPTION_COLUMN])
                 ;
+
+            if (null !== $brand = $this->findOrCreateBrand($productData, $locale)) {
+                $event->setBrandId($brand->getId());
+            }
         }
 
-        if (null !== $brand = $this->findOrCreateBrand($productData, $locale)) {
-            $event->setBrandId($brand->getId());
-        }
-
-        $event = $this->dispatcher->dispatch(
+        $this->dispatcher->dispatch(
             $event,
             $isNew ? TheliaEvents::PRODUCT_CREATE : TheliaEvents::PRODUCT_UPDATE
         );
