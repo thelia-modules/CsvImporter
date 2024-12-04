@@ -426,6 +426,9 @@ class CsvProductImporterService
         $attributeAvList = [];
         $attributeAvListIds = [];
         foreach ($productData[self::ATTRIBUTES] as $attributeColumn => $attributeTitle) {
+            if (!$attributeTitle) {
+                continue;
+            }
             $attribute = $this->findOrCreateAttribute($attributeColumn, $locale);
             $attributeAv = $this->findOrCreateAttributeAv($attributeTitle, $attribute, $locale);
             $attributeAvList[] = $attributeAv;
