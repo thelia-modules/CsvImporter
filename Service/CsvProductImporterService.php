@@ -326,11 +326,9 @@ class CsvProductImporterService
             $this->dispatcher->dispatch($createEvent, TheliaEvents::CATEGORY_CREATE);
             $category = $createEvent->getCategory();
 
-            Tlog::getInstance()->info('Created catégory ' . $productData[$level]);
+            Tlog::getInstance()->info('Created category ' . $productData[$level]);
         }
-        $this->findOrCreateCategory($productData, $locale, $category, $this->incrementLevel($level));
-
-        return $category;
+        return $this->findOrCreateCategory($productData, $locale, $category, $this->incrementLevel($level));
     }
 
     public function incrementLevel(string $level): string
