@@ -353,14 +353,12 @@ class CsvProductImporterService
             ->filterByLocale($locale)
             ->endUse()
             ->findOne();
-        if ($product) {
-            return $product;
+        if (!$product) {
+            $product = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
+            Tlog::getInstance()->addInfo('Created product ' . $productData[self::TITLE_COLUMN]);
         }
 
-        $newProduct = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
-        Tlog::getInstance()->addInfo('Created product ' . $productData[self::TITLE_COLUMN]);
-
-        return $this->dispatchProductEvent(new ProductUpdateEvent($newProduct->getId()), $productData, $locale, $category, $country);
+        return $this->dispatchProductEvent(new ProductUpdateEvent($product->getId()), $productData, $locale, $category, $country);
     }
 
     /**
