@@ -3,6 +3,7 @@
 namespace CsvImporter\Service;
 
 use Symfony\Component\Yaml\Yaml;
+use Thelia\Log\Tlog;
 
 class CsvParserService
 {
@@ -27,7 +28,7 @@ class CsvParserService
         }
         foreach ($this->mapping as $fieldName => $header) {
             $mappedData[$fieldName] = $productData[$header] ?? null;
-            }
+        }
 
 
         return $mappedData;
@@ -50,4 +51,29 @@ class CsvParserService
         return $this->getColumns($productData, self::ATTRIBUTE_DISCRIMINATOR);
     }
 
+    /**
+     * Issue a warning for each missing column in a file header
+     *
+     * @param array $headers
+     * @return void
+     */
+    public function checkHeaders(array $headers): void
+    {
+        foreach ($this->mapping as $fieldName => $headerLabel) {
+            if (! in_array($headerLabel, $headers, true)) {
+                Tlog::getInstance()->warning("Column \"$headerLabel\" not found, some data could be missing after import");
+            }
+        }
+
+        foreach ($headers as $headerLabel) {
+            if (!in_array($headerLabel, $this->mapping, true)
+                &&
+                !str_starts_with($headerLabel, self::ATTRIBUTE_DISCRIMINATOR)
+                &&
+                !str_starts_with($headerLabel, self::FEATURE_DISCRIMINATOR)
+            ) {
+                Tlog::getInstance()->warning("Found additional \"$headerLabel\" column. This column will be ignored.");
+            }
+        }
+    }
 }

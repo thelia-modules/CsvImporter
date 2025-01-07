@@ -12,6 +12,7 @@
 
 namespace CsvImporter\Service;
 
+use Propel\Runtime\ActiveQuery\Criteria;
 use Propel\Runtime\Exception\PropelException;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -35,6 +36,7 @@ use Thelia\Core\Event\Template\TemplateAddAttributeEvent;
 use Thelia\Core\Event\Template\TemplateAddFeatureEvent;
 use Thelia\Core\Event\Template\TemplateCreateEvent;
 use Thelia\Core\Event\TheliaEvents;
+use Thelia\Exception\TheliaProcessException;
 use Thelia\Files\FileManager;
 use Thelia\Log\Tlog;
 use Thelia\Model\Attribute;
@@ -169,6 +171,9 @@ class CsvProductImporterService
         $line = 0;
 
         $headers = fgetcsv($handle);
+
+        $this->csvParser->checkHeaders($headers);
+
         while (($data = fgetcsv($handle)) !== false) {
             $line++;
 
@@ -358,6 +363,17 @@ class CsvProductImporterService
             Tlog::getInstance()->addInfo('Created product ' . $productData[self::TITLE_COLUMN]);
         }
 
+        // Si un produit avec la même ref existe, refuser la modification
+        if (ProductQuery::create()
+                ->filterById($product->getId(), Criteria::NOT_EQUAL)
+                ->filterByRef($productData[self::REF_COLUMN])
+                ->count() > 0
+        ) {
+            throw new TheliaProcessException(
+                'Failed to import product ref. ' . $productData[self::REF_COLUMN] . ': a product with the same ref. already exists.'
+            );
+        }
+
         return $this->dispatchProductEvent(new ProductUpdateEvent($product->getId()), $productData, $locale, $category, $country);
     }
 
@@ -377,8 +393,8 @@ class CsvProductImporterService
             ->setLocale($locale)
             ->setTitle($productData[self::TITLE_COLUMN])
             ->setDefaultCategory($category->getId())
-            ->setBasePrice($productData[self::PRICE_EXCL_TAX_COLUMN])
-            ->setBaseWeight($productData[self::WEIGHT_COLUMN] ?? 0)
+            ->setBasePrice($this->cleanupNumber($productData[self::PRICE_EXCL_TAX_COLUMN]))
+            ->setBaseWeight($this->cleanupNumber($productData[self::WEIGHT_COLUMN] ?? 0))
             ->setTaxRuleId($this->findOrCreateTax($productData, $country, $locale)->getId())
             ->setVisible(1)
             ->setCurrencyId(1);
@@ -449,9 +465,10 @@ class CsvProductImporterService
             }
         }
         $event = new ProductSaleElementUpdateEvent($product, $productSaleElement->getId());
-        $event->setWeight($productData[self::WEIGHT_COLUMN])
+        $event
+            ->setWeight($this->cleanupNumber($productData[self::WEIGHT_COLUMN]))
             ->setProductSaleElement($productSaleElement)
-            ->setPrice($productData[self::PRICE_EXCL_TAX_COLUMN])
+            ->setPrice($this->cleanupNumber($productData[self::PRICE_EXCL_TAX_COLUMN]))
             ->setEanCode($productData[self::EAN_COLUMN])
             ->setReference($productData[self::REF_COLUMN])
             ->setCurrencyId(1)
@@ -723,5 +740,10 @@ class CsvProductImporterService
         copy($filePath, $newFilePath);
 
         return $newFilePath;
+    }
+
+    protected function cleanupNumber(string $number)
+    {
+        return (float) preg_replace("/[^0-9.,]/", '', str_replace(',', '.', $number));
     }
 }
