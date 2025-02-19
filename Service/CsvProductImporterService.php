@@ -726,7 +726,7 @@ class CsvProductImporterService
                 ->filterByFile($fileName)
                 ->findOneOrCreate();
             if (!$productImage->isNew() && file_exists($filePath) && is_file($filePath)) {
-                $this->fileManager->deleteFile($filePath);
+                $this->fileManager->deleteFile($productImage);
             }
 
             $uploadedFile = new UploadedFile($this->copyFile($filePath), $fileName);
