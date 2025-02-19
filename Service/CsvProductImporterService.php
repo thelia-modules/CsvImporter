@@ -202,14 +202,20 @@ class CsvProductImporterService
                 Tlog::getInstance()->addWarning("Line $line: Missing Product price for:" . $productData[self::REF_COLUMN]);
                 continue;
             }
-            $product = $this->findOrCreateProduct(
-                $productData,
-                $country,
-                $locale,
-                $this->findOrCreateCategory($productData, $locale)
-            );
-            $this->createOrUpdateProductSaleElements($product, $productData, $locale, $basedir);
-            $this->addFeaturesToProduct($product, $productData, $locale);
+            try {
+                $product = $this->findOrCreateProduct(
+                    $productData,
+                    $country,
+                    $locale,
+                    $this->findOrCreateCategory($productData, $locale)
+                );
+                $this->createOrUpdateProductSaleElements($product, $productData, $locale, $basedir);
+                $this->addFeaturesToProduct($product, $productData, $locale);
+            } catch (\Exception $ex) {
+                Tlog::getInstance()->error("Error détected in line $line");
+
+                throw $ex;
+            }
         }
 
         fclose($handle);
@@ -231,7 +237,7 @@ class CsvProductImporterService
         }
 
         $taxEvent = $this->createTax($locale, $taxTitle, $taxPercent);
-        $taxRuleEvent = $this->createTaxRule($locale, $taxTitle, $country, $taxEvent->getTax()->getId());
+        $taxRuleEvent = $this->createTaxRule($locale, $taxTitle, $country, $taxEvent->getTax()?->getId());
 
         return $taxRuleEvent->getTaxRule();
     }
@@ -359,18 +365,24 @@ class CsvProductImporterService
             ->endUse()
             ->findOne();
         if (!$product) {
+            if (ProductQuery::create()->filterByRef($productData[self::REF_COLUMN])->count() > 0) {
+                throw new TheliaProcessException(
+                    'Failed to import and create product ref. ' . $productData[self::REF_COLUMN] . ': a product with the same ref. already exists.'
+                );
+            }
+
             $product = $this->dispatchProductEvent(new ProductCreateEvent(), $productData, $locale, $category, $country, true);
             Tlog::getInstance()->addInfo('Created product ' . $productData[self::TITLE_COLUMN]);
         }
 
-        // Si un produit avec la même ref existe, refuser la modification
+        // Si un produit différent avec la même ref existe, refuser la modification
         if (ProductQuery::create()
                 ->filterById($product->getId(), Criteria::NOT_EQUAL)
                 ->filterByRef($productData[self::REF_COLUMN])
                 ->count() > 0
         ) {
             throw new TheliaProcessException(
-                'Failed to import product ref. ' . $productData[self::REF_COLUMN] . ': a product with the same ref. already exists.'
+                'Failed to import and update product ref. ' . $productData[self::REF_COLUMN] . ': a product with the same ref. already exists.'
             );
         }
 
