@@ -3,7 +3,10 @@
     "license": "LGPL-3.0+",
     "type": "thelia-module",
     "require": {
-        "thelia/installer": "~1.1"
+        "thelia/installer": "~1.1",
+        "symfony/html-sanitizer": "^7.4",
+        "symfony/lock": "^7.4",
+        "symfony/process": "^7.4"
     },
     "extra": {
         "installer-name": "CsvImporter"

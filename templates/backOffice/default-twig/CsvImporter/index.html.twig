@@ -1,0 +1,102 @@
+{% extends '@BackOfficeDefaultTwig/base.html.twig' %}
+{% import 'CsvImporter/_status.html.twig' as status %}
+{% set domain = 'csvimporter.bo.default-twig' %}
+
+{% block title %}{{ 'Catalog import'|trans({}, domain) }}{% endblock %}
+{% block body_testid %}csv-importer-index{% endblock %}
+
+{% block breadcrumb %}
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ path('admin.home') }}">{{ 'Home'|trans }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ path('admin.tools.index') }}">{{ 'Tools'|trans }}</a></li>
+            <li class="breadcrumb-item active" aria-current="page">{{ 'Catalog import'|trans({}, domain) }}</li>
+        </ol>
+    </nav>
+{% endblock %}
+
+{% block content %}
+    <div class="container-fluid" data-testid="csv-importer-page">
+        <h1 class="h3 mb-3">{{ 'Catalog import'|trans({}, domain) }}</h1>
+
+        {% if can_create %}
+            <div class="card mb-4">
+                <div class="card-header">{{ 'Import a file'|trans({}, domain) }}</div>
+                <div class="card-body">
+                    <form method="post" action="{{ path('csvimporter.upload') }}" enctype="multipart/form-data" data-testid="csv-importer-upload-form" onsubmit="var images = this.elements.images; if (images && !images.value) { images.disabled = true; setTimeout(function () { images.disabled = false; }, 0); }">
+                        <input type="hidden" name="_token" value="{{ assignToken() }}">
+                        <div class="mb-3">
+                            <label for="csv-importer-file" class="form-label">{{ 'CSV file'|trans({}, domain) }}</label>
+                            <input type="file" class="form-control" id="csv-importer-file" name="file" accept=".csv,.tsv,.txt" required aria-describedby="csv-importer-file-help">
+                            <div id="csv-importer-file-help" class="form-text">{{ 'One product per line, the first line names the columns. %limit% MB at most. Nothing is written before you have read the simulation.'|trans({'%limit%': max_megabytes}, domain) }}</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="csv-importer-images" class="form-label">{{ 'Images archive (optional)'|trans({}, domain) }}</label>
+                            <input type="file" class="form-control" id="csv-importer-images" name="images" accept=".zip" aria-describedby="csv-importer-images-help">
+                            <div id="csv-importer-images-help" class="form-text">{{ 'A .zip of the images named in the image column. %limit% MB at most. Without it, only web addresses are loaded.'|trans({'%limit%': images_megabytes}, domain) }}</div>
+                        </div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label for="csv-importer-profile" class="form-label">{{ 'Column mapping'|trans({}, domain) }}</label>
+                                <select class="form-select" id="csv-importer-profile" name="profile">
+                                    <option value="new">{{ 'New profile, guessed from the file'|trans({}, domain) }}</option>
+                                    {% for profile in profiles %}
+                                        <option value="{{ profile.id }}">{{ profile.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="csv-importer-profile-name" class="form-label">{{ 'Name of the new profile'|trans({}, domain) }}</label>
+                                <input type="text" class="form-control" id="csv-importer-profile-name" name="profile_name" maxlength="100" aria-describedby="csv-importer-profile-name-help">
+                                <div id="csv-importer-profile-name-help" class="form-text">{{ 'Left empty, the name of the file is used. Ignored when an existing profile is chosen.'|trans({}, domain) }}</div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="csv-importer-mode" class="form-label">{{ 'The import may'|trans({}, domain) }}</label>
+                            <select class="form-select" id="csv-importer-mode" name="mode">
+                                {% for mode in modes %}
+                                    <option value="{{ mode.value }}">{{ status.mode(mode) }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary" data-testid="csv-importer-upload-submit">{{ 'Upload and map the columns'|trans({}, domain) }}</button>
+                    </form>
+                </div>
+            </div>
+        {% endif %}
+
+        <div class="card">
+            <div class="card-header">{{ 'Recent imports'|trans({}, domain) }}</div>
+            {% if jobs is empty %}
+                <div class="card-body text-muted" data-testid="csv-importer-no-jobs">{{ 'No import yet.'|trans({}, domain) }}</div>
+            {% else %}
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0" data-testid="csv-importer-jobs">
+                        <thead>
+                            <tr>
+                                <th scope="col">#</th>
+                                <th scope="col">{{ 'File'|trans({}, domain) }}</th>
+                                <th scope="col">{{ 'Kind'|trans({}, domain) }}</th>
+                                <th scope="col">{{ 'Status'|trans({}, domain) }}</th>
+                                <th scope="col" class="text-end">{{ 'Rows'|trans({}, domain) }}</th>
+                                <th scope="col">{{ 'Date'|trans({}, domain) }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for job in jobs %}
+                                <tr data-testid="csv-importer-job-row">
+                                    <td><a href="{{ path('csvimporter.job', {id: job.id}) }}">{{ job.id }}</a></td>
+                                    <td class="text-break">{{ job.sourceName }}</td>
+                                    <td>{{ job.status == 'draft' ? '-' : (job.dryRun ? 'Simulation'|trans({}, domain) : 'Import'|trans({}, domain)) }}</td>
+                                    <td>{{ status.badge(job.status, 'csv-importer-job-status') }}</td>
+                                    <td class="text-end">{{ job.processedRows }} / {{ job.totalRows }}</td>
+                                    <td>{{ job.createdAt|date('Y-m-d H:i') }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

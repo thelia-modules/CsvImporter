@@ -1,0 +1,25 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * This file is part of the Thelia package.
+ * http://www.thelia.net
+ *
+ * (c) OpenStudio <info@thelia.net>
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace CsvImporter\Admin;
+
+use CsvImporter\Model\CsvImporterJob;
+
+interface JobStarter
+{
+    /**
+     * Hands a queued job to a process that runs it; false when nothing could be started.
+     */
+    public function start(CsvImporterJob $job): bool;
+}

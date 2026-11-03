@@ -7,12 +7,12 @@
     <descriptive locale="fr_FR">
         <title>CSV Importer</title>
     </descriptive>
-    <version>1.0.13</version>
+    <version>2.0.0</version>
     <author>
         <name>Thelia</name>
         <email>info@thelia.net</email>
     </author>
     <type>classic</type>
-    <thelia>2.5.0</thelia>
+    <thelia>3.3.0</thelia>
     <stability>alpha</stability>
 </module>

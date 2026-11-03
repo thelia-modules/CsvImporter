@@ -1,0 +1,239 @@
+{% extends '@BackOfficeDefaultTwig/base.html.twig' %}
+{% import 'CsvImporter/_status.html.twig' as status %}
+{% set domain = 'csvimporter.bo.default-twig' %}
+{% set kind = job.status == 'draft' ? 'File'|trans({}, domain) : (job.dryRun ? 'Simulation'|trans({}, domain) : 'Import'|trans({}, domain)) %}
+
+{% block title %}{{ kind }} #{{ job.id }}{% endblock %}
+{% block body_testid %}csv-importer-job{% endblock %}
+
+{% block head_extra %}
+    {% if auto_refresh|default(false) %}<meta http-equiv="refresh" content="{{ refresh_seconds }};url={{ path('csvimporter.job', {id: job.id, round: refresh_round + 1}) }}">{% endif %}
+{% endblock %}
+
+{% block breadcrumb %}
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{{ path('admin.home') }}">{{ 'Home'|trans }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ path('admin.tools.index') }}">{{ 'Tools'|trans }}</a></li>
+            <li class="breadcrumb-item"><a href="{{ path('csvimporter.index') }}">{{ 'Catalog import'|trans({}, domain) }}</a></li>
+            <li class="breadcrumb-item active" aria-current="page">{{ kind }} #{{ job.id }}</li>
+        </ol>
+    </nav>
+{% endblock %}
+
+{% block content %}
+    <div class="container-fluid" data-testid="csv-importer-job-page" data-csv-importer-status="{{ job.status }}">
+        <h1 class="h3 mb-3">{{ kind }} #{{ job.id }}</h1>
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <p class="mb-1" role="status">
+                    {{ status.badge(job.status) }}
+                    <span class="ms-2 text-break" data-testid="csv-importer-file-name">{{ job.sourceName }}</span>
+                </p>
+                <p class="small text-muted mb-0">
+                    {% if profile %}{{ 'Profile'|trans({}, domain) }} : <span data-testid="csv-importer-profile-name">{{ profile.name }}</span> ·{% endif %}
+                    {% if mode %}{{ status.mode(mode) }}{% endif %}
+                </p>
+            </div>
+        </div>
+
+        {% if job.status == 'draft' %}
+            {% if file_problem is defined %}
+                <div class="alert alert-danger" data-testid="csv-importer-file-problem">{{ file_problem }}</div>
+            {% else %}
+                {% if can_create %}
+                    <form method="post" action="{{ path('csvimporter.prepare', {id: job.id}) }}" data-testid="csv-importer-mapping-form">
+                        <input type="hidden" name="_token" value="{{ assignToken() }}">
+                        <div class="card mb-4">
+                            <div class="card-header">{{ 'What each column holds'|trans({}, domain) }}</div>
+                            {% if missing_columns %}
+                                <div class="alert alert-warning m-3 mb-0" data-testid="csv-importer-missing-columns">
+                                    {{ 'The profile expects columns the file does not have; they are dropped when you save:'|trans({}, domain) }}
+                                    {% for header in missing_columns %}<strong class="text-break">{{ header }}</strong>{{ not loop.last ? ', ' : '' }}{% endfor %}
+                                </div>
+                            {% endif %}
+                            {% if mapping_issues %}
+                                <div class="alert alert-warning m-3 mb-0" data-testid="csv-importer-mapping-issues">
+                                    <ul class="mb-0">{% for issue in mapping_issues %}<li class="text-break">{{ issue }}</li>{% endfor %}</ul>
+                                </div>
+                            {% endif %}
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">{{ 'Column of the file'|trans({}, domain) }}</th>
+                                            <th scope="col">{{ 'Holds'|trans({}, domain) }}</th>
+                                            <th scope="col">{{ 'Name of the feature'|trans({}, domain) }}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for column in columns %}
+                                            <tr data-testid="csv-importer-mapping-row">
+                                                <th scope="row" class="fw-normal text-break">{{ column.header }}</th>
+                                                <td>
+                                                    <select class="form-select form-select-sm" name="columns[{{ column.index }}][field]" aria-label="{{ 'Holds'|trans({}, domain) }} : {{ column.header }}">
+                                                        <option value="">{{ 'Ignored'|trans({}, domain) }}</option>
+                                                        {% for field in fields %}
+                                                            <option value="{{ field.value }}"{{ column.field == field.value ? ' selected' : '' }}>{{ ('field.' ~ field.value)|trans({}, domain) }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <input type="text" class="form-control form-control-sm" name="columns[{{ column.index }}][name]" value="{{ column.name }}" maxlength="255" aria-label="{{ 'Name of the feature'|trans({}, domain) }} : {{ column.header }}">
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="card-footer small text-muted">{{ 'The mapping belongs to the profile: another file using the same profile gets the same mapping.'|trans({}, domain) }}</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="csv-importer-job-mode" class="form-label">{{ 'The import may'|trans({}, domain) }}</label>
+                            <select class="form-select" id="csv-importer-job-mode" name="mode">
+                                {% for choice in modes %}
+                                    <option value="{{ choice.value }}"{{ mode and mode.value == choice.value ? ' selected' : '' }}>{{ status.mode(choice) }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button type="submit" name="intent" value="save" class="btn btn-outline-secondary" data-testid="csv-importer-save-mapping">{{ 'Save the mapping'|trans({}, domain) }}</button>
+                        <button type="submit" name="intent" value="simulate" class="btn btn-primary" data-testid="csv-importer-simulate">{{ 'Save and simulate'|trans({}, domain) }}</button>
+                    </form>
+                {% else %}
+                    <p class="text-muted">{{ 'You may read the imports but not start one.'|trans({}, domain) }}</p>
+                {% endif %}
+            {% endif %}
+
+        {% elseif job.status in ['queued', 'running'] %}
+            <div class="card mb-4">
+                <div class="card-body" role="status" data-testid="csv-importer-progress">
+                    {% if job.status == 'queued' %}
+                        <p class="mb-2">{{ 'The job waits to be started. This page refreshes on its own.'|trans({}, domain) }}</p>
+                    {% else %}
+                        <p class="mb-2">{{ '%done% of %total% rows read. This page refreshes on its own.'|trans({'%done%': job.processedRows, '%total%': job.totalRows}, domain) }}</p>
+                        <div class="progress" aria-hidden="true"><div class="progress-bar" style="width: {{ job.totalRows > 0 ? (job.processedRows * 100 / job.totalRows)|round : 0 }}%"></div></div>
+                    {% endif %}
+                </div>
+            </div>
+            {% if not_started %}
+                <div class="alert alert-warning" data-testid="csv-importer-not-started">
+                    {{ 'Nothing has picked this job up. Start it from a console:'|trans({}, domain) }} <code>{{ console_command }}</code>
+                </div>
+            {% endif %}
+            {% if stalled %}
+                <div class="alert alert-warning" data-testid="csv-importer-stalled">{{ 'The job has not moved for several minutes: its process may have been stopped.'|trans({}, domain) }}</div>
+            {% endif %}
+            {% if can_abandon %}
+                <form method="post" action="{{ path('csvimporter.abandon', {id: job.id}) }}" class="mb-3" data-testid="csv-importer-abandon-form">
+                    <input type="hidden" name="_token" value="{{ assignToken() }}">
+                    <button type="submit" class="btn btn-outline-danger btn-sm">{{ 'Abandon this job'|trans({}, domain) }}</button>
+                </form>
+            {% endif %}
+            <p class="small">
+                {% if auto_refresh %}
+                    <a href="{{ path('csvimporter.job', {id: job.id, round: max_refresh_round}) }}">{{ 'Stop refreshing'|trans({}, domain) }}</a>
+                {% else %}
+                    {{ 'This page no longer refreshes on its own.'|trans({}, domain) }} <a href="{{ path('csvimporter.job', {id: job.id}) }}">{{ 'Refresh'|trans({}, domain) }}</a>
+                {% endif %}
+            </p>
+
+        {% else %}
+            {% if job.status == 'failed' %}
+                <div class="alert alert-danger" data-testid="csv-importer-job-error">{{ error ?: 'The import did not run.'|trans({}, domain) }}</div>
+            {% endif %}
+
+            <div class="row g-3 mb-4" data-testid="csv-importer-counts">
+                {% for key, count in {
+                    'Created': job.createdRows,
+                    'Updated': job.updatedRows,
+                    'Unchanged': job.unchangedRows,
+                    'Skipped': job.skippedRows,
+                    'Failed': job.failedRows,
+                } %}
+                    <div class="col-6 col-md-2">
+                        <div class="card h-100"><div class="card-body py-2">
+                            <div class="small text-muted">{{ key|trans({}, domain) }}</div>
+                            <div class="fs-4" data-testid="csv-importer-count-{{ key|lower }}">{{ count }}</div>
+                        </div></div>
+                    </div>
+                {% endfor %}
+            </div>
+
+            {% if job.dryRun and job.status == 'done' %}
+                <div class="alert alert-info" data-testid="csv-importer-simulation-notice">{{ 'This was a simulation: nothing was written to the catalog.'|trans({}, domain) }}</div>
+                {% if profile_changed %}
+                    <div class="alert alert-warning" data-testid="csv-importer-profile-changed">{{ 'The mapping changed since this simulation: simulate again before importing.'|trans({}, domain) }}</div>
+                {% elseif not file_available %}
+                    <div class="alert alert-warning">{{ 'The file is no longer available: stage it again.'|trans({}, domain) }}</div>
+                {% elseif can_update %}
+                    <form method="post" action="{{ path('csvimporter.run', {id: job.id}) }}" class="card mb-4" data-testid="csv-importer-run-form">
+                        <input type="hidden" name="_token" value="{{ assignToken() }}">
+                        <div class="card-body">
+                            <h2 class="h5">{{ 'Import for real'|trans({}, domain) }}</h2>
+                            <p>{{ 'The catalog is written with exactly what this simulation shows: %created% to create, %updated% to update.'|trans({'%created%': job.createdRows, '%updated%': job.updatedRows}, domain) }}</p>
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" name="confirm" value="1" id="csv-importer-confirm" required>
+                                <label class="form-check-label" for="csv-importer-confirm">{{ 'I have read the report of this simulation'|trans({}, domain) }}</label>
+                            </div>
+                            <button type="submit" class="btn btn-danger" data-testid="csv-importer-run">{{ 'Import into the catalog'|trans({}, domain) }}</button>
+                        </div>
+                    </form>
+                {% endif %}
+            {% endif %}
+
+            <div class="card" data-testid="csv-importer-report">
+                <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <span>{{ 'Report'|trans({}, domain) }}</span>
+                    <a href="{{ path('csvimporter.report', {id: job.id}) }}" class="btn btn-sm btn-outline-secondary" data-testid="csv-importer-report-download">{{ 'Download as CSV'|trans({}, domain) }}</a>
+                </div>
+                <div class="card-body border-bottom py-2">
+                    <ul class="nav nav-pills small" aria-label="{{ 'Filter the report'|trans({}, domain) }}">
+                        <li class="nav-item"><a class="nav-link py-1 {{ outcome is null ? 'active' : '' }}" href="{{ path('csvimporter.job', {id: job.id}) }}">{{ 'All'|trans({}, domain) }}</a></li>
+                        {% for name in outcomes %}
+                            {% if outcome_counts[name] is defined %}
+                                <li class="nav-item"><a class="nav-link py-1 {{ outcome == name ? 'active' : '' }}" href="{{ path('csvimporter.job', {id: job.id, outcome: name}) }}" data-testid="csv-importer-filter-{{ name }}">{{ ('outcome.' ~ name)|trans({}, domain) }} ({{ outcome_counts[name] }})</a></li>
+                            {% endif %}
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% if lines is empty %}
+                    <div class="card-body text-muted" data-testid="csv-importer-no-lines">{{ 'Nothing to report.'|trans({}, domain) }}</div>
+                {% else %}
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th scope="col">{{ 'Line'|trans({}, domain) }}</th>
+                                    <th scope="col">{{ 'Outcome'|trans({}, domain) }}</th>
+                                    <th scope="col">{{ 'Reference'|trans({}, domain) }}</th>
+                                    <th scope="col">{{ 'Message'|trans({}, domain) }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for line in lines %}
+                                    <tr data-testid="csv-importer-report-line" data-outcome="{{ line.outcome }}">
+                                        <td>{{ line.line ?? '-' }}</td>
+                                        <td>{{ ('outcome.' ~ line.outcome)|trans({}, domain) }}</td>
+                                        <td class="text-break">{{ line.reference }}</td>
+                                        <td class="text-break">{{ line.message }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% if pages > 1 %}
+                        <nav class="card-footer d-flex justify-content-between align-items-center" aria-label="{{ 'Pages of the report'|trans({}, domain) }}">
+                            <span class="small text-muted">{{ 'Page %page% of %pages%'|trans({'%page%': page, '%pages%': pages}, domain) }}</span>
+                            <span>
+                                {% if page > 1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ path('csvimporter.job', {id: job.id, outcome: outcome, page: page - 1}) }}">{{ 'Previous'|trans({}, domain) }}</a>{% endif %}
+                                {% if page < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ path('csvimporter.job', {id: job.id, outcome: outcome, page: page + 1}) }}">{{ 'Next'|trans({}, domain) }}</a>{% endif %}
+                            </span>
+                        </nav>
+                    {% endif %}
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+{% endblock %}

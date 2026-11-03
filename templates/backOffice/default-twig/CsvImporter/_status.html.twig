@@ -1,0 +1,19 @@
+{% macro badge(status, testid) %}
+    {% set domain = 'csvimporter.bo.default-twig' %}
+    {% set labels = {
+        draft: 'To map'|trans({}, domain),
+        queued: 'Waiting'|trans({}, domain),
+        running: 'Running'|trans({}, domain),
+        done: 'Done'|trans({}, domain),
+        failed: 'Failed'|trans({}, domain),
+    } %}
+    {% set colors = { draft: 'secondary', queued: 'secondary', running: 'primary', done: 'success', failed: 'danger' } %}
+    <span class="badge text-bg-{{ colors[status]|default('secondary') }}" data-testid="{{ testid|default('csv-importer-status') }}">{{ labels[status]|default(status) }}</span>
+{% endmacro %}
+
+{% macro mode(mode) %}
+    {% set domain = 'csvimporter.bo.default-twig' %}
+    {% if mode.value == 'create_or_update' %}{{ 'Create new products and update existing ones'|trans({}, domain) }}
+    {% elseif mode.value == 'update_only' %}{{ 'Update existing products only'|trans({}, domain) }}
+    {% else %}{{ 'Create new products only'|trans({}, domain) }}{% endif %}
+{% endmacro %}

@@ -1,0 +1,11 @@
+{% set domain = 'csvimporter.bo.default-twig' %}
+<div class="row g-3 mb-4" data-testid="csv-importer-tools-entry">
+    <div class="col-md-3">
+        <a href="{{ path('csvimporter.index') }}" class="card text-decoration-none h-100" data-testid="tools-link-csvimporter.index">
+            <div class="card-body d-flex align-items-center gap-3">
+                <i class="bi bi-file-earmark-spreadsheet fs-3 text-primary" aria-hidden="true"></i>
+                <span class="fw-medium text-body">{{ 'Catalog import'|trans({}, domain) }}</span>
+            </div>
+        </a>
+    </div>
+</div>
